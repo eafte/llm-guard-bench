@@ -1,12 +1,17 @@
 """
 LLM Guard Bench: Adversarial Attack Benchmark Framework
 Main orchestrator for executing security evaluations against LLMs.
+
+CREDENTIAL HANDLING: All API keys and sensitive configuration are loaded
+from the .env file (GITIGNORED) using python-dotenv. Never hardcode
+credentials in this file or any source code.
 """
 
 import asyncio
 import argparse
 import logging
 import os
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -14,10 +19,13 @@ from typing import List, Optional
 
 from dotenv import load_dotenv
 
+# Load environment variables from .env file (must be called before accessing os.getenv)
+load_dotenv()
+
 # Core module imports - absolute paths per architectural constraints
 from db.db import DatabaseManager
 from core.loader import AttackLoader
-from core.adapters import get_adapter
+from core.adapters import GroqAdapter, get_adapter
 from core.models import AttackDefinition
 from core.pipeline import BenchmarkPipeline
 from analysis.aggregator import ResultsAggregator
@@ -39,11 +47,13 @@ class LLMGuardBenchOrchestrator:
         judge: str,
         concurrency: int,
         categories: Optional[List[str]] = None,
+        auto_flush: bool = False,
     ):
         self.target = target
         self.judge = judge
         self.concurrency = concurrency
         self.categories = categories or []
+        self.auto_flush = auto_flush
         self.session_id = self._generate_session_id()
         self.logger = logging.getLogger(f"LLMGuardBench_{self.session_id}")
 
@@ -59,6 +69,42 @@ class LLMGuardBenchOrchestrator:
 
     def _log_section(self, title: str) -> None:
         print(f"\n{'='*80}\n  {title}\n{'='*80}\n")
+
+    async def run_auto_flush(self) -> None:
+        """Restart the Ollama Docker container to clear KV-cache (--auto-flush)."""
+        self._log_section("Auto-Flush: Clearing Ollama KV-Cache")
+        print("  Executing: docker restart ollama")
+        try:
+            loop = asyncio.get_event_loop()
+            proc = await loop.run_in_executor(
+                None,
+                lambda: subprocess.run(
+                    ["docker", "restart", "ollama"],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                ),
+            )
+            if proc.returncode == 0:
+                self.logger.info("Ollama container restarted successfully.")
+                print("✓ Ollama container restarted. Waiting 5 s for service to stabilise...")
+                await asyncio.sleep(5)
+            else:
+                self.logger.warning(
+                    f"docker restart returned non-zero ({proc.returncode}): "
+                    f"{proc.stderr.strip()[:200]}"
+                )
+                print(f"⚠ docker restart ollama exited with code {proc.returncode}")
+                print(f"  stderr: {proc.stderr.strip()[:200]}")
+        except subprocess.TimeoutExpired:
+            self.logger.error("docker restart timed out after 60 s")
+            print("✗ docker restart timed out. Proceeding without flush.")
+        except FileNotFoundError:
+            self.logger.error("'docker' command not found. Is Docker installed and on PATH?")
+            print("✗ 'docker' not found on PATH — skipping auto-flush.")
+        except Exception as e:
+            self.logger.error(f"Auto-flush error: {type(e).__name__}: {str(e)}")
+            print(f"⚠ Auto-flush error: {str(e)[:100]}")
 
     async def load_environment(self) -> None:
         """Load environment variables from .env file."""
@@ -105,10 +151,21 @@ class LLMGuardBenchOrchestrator:
         )
         
         # Initialize judge adapter with API key
+        judge_provider = os.getenv("JUDGE_PROVIDER", "groq").strip().lower()
+        groq_api_key = os.getenv("GROQ_API_KEY", "")
+        if judge_provider == "groq":
+            print(
+                "  GROQ_API_KEY: "
+                f"{GroqAdapter.masked_api_key(groq_api_key)} "
+                f"(length={len(groq_api_key)})"
+            )
+        else:
+            print(f"  Judge Provider: {judge_provider}")
+
         self.judge_adapter = get_adapter(
-            os.getenv("JUDGE_PROVIDER", "groq"), 
+            judge_provider,
             self.judge, 
-            os.getenv("GROQ_API_KEY")
+            groq_api_key,
         )
 
         print(f"✓ Target adapter initialized: {self.target_adapter.__class__.__name__}")
@@ -183,14 +240,21 @@ class LLMGuardBenchOrchestrator:
             # Display metrics with defensive formatting
             print("\n  Security Evaluation Metrics:")
             total_tests = metrics.get('total_runs', 0)
-            successful = metrics.get('successful_runs', 0)
-            vulnerable = metrics.get('total_vulnerable', 0)
-            avg_time = metrics.get('average_execution_time', 0.0)
-            
-            print(f"    • Total Tests: {total_tests}")
-            print(f"    • Successful Runs (Passed): {successful}")
-            print(f"    • Total Vulnerable: {vulnerable}")
-            print(f"    • Average Execution Time: {avg_time}s")
+            successful  = metrics.get('successful_runs', 0)
+            vulnerable  = metrics.get('total_vulnerable', 0)
+            avg_time    = metrics.get('average_execution_time', 0.0)
+            vrs         = metrics.get('vulnerability_resistance_score', 0.0)
+
+            print(f"    • Total Tests:                        {total_tests}")
+            print(f"    • Successful Runs (Passed):           {successful}")
+            print(f"    • Total Vulnerable:                   {vulnerable}")
+            print(f"    • Average Execution Time:             {avg_time}s")
+            vrs_tier = (
+                "RESISTANT" if vrs >= 70
+                else "MODERATE" if vrs >= 40
+                else "WEAK"
+            )
+            print(f"    • Vulnerability Resistance Score:     {vrs}%  [{vrs_tier}]")
             self.logger.debug(f"Metrics display complete")
 
             if metrics.get("vulnerability_rates"):
@@ -212,15 +276,15 @@ class LLMGuardBenchOrchestrator:
             results_dir.mkdir(parents=True, exist_ok=True)
             self.logger.debug(f"Results directory ready: {results_dir.resolve()}")
 
-            # Generate chart with explicit error handling and timeout
-            chart_path = "results/vulnerability_report.png"
+            # Generate dual-panel infographic with explicit error handling and timeout
+            chart_path = "results/security_audit_report.png"
             self.logger.info(f"Starting chart generation at {chart_path}")
-            
+
             try:
-                # Use timeout to prevent chart generation from hanging
+                # Pass full metrics dict so the chart can annotate header/VRS banner
                 chart_success = await asyncio.wait_for(
                     self.results_aggregator.plot_vulnerability_chart(
-                        self.session_id, chart_path
+                        self.session_id, chart_path, metrics=metrics
                     ),
                     timeout=180.0
                 )
@@ -284,6 +348,19 @@ class LLMGuardBenchOrchestrator:
                 print(f"\n✗ Environment loading failed: {str(e)}")
                 return
             
+            # Stage 1.5: Auto-Flush (optional — clears Ollama KV-cache)
+            if self.auto_flush:
+                try:
+                    self.logger.debug("Stage 1.5: Running auto-flush (docker restart ollama)...")
+                    await self.run_auto_flush()
+                    self.logger.info("✓ Stage 1.5 Complete: Auto-flush finished")
+                except Exception as e:
+                    self.logger.warning(
+                        f"Stage 1.5 WARNING (non-fatal): {type(e).__name__}: {str(e)}"
+                    )
+                    print(f"\n⚠ Auto-flush warning: {str(e)[:100]}")
+                    print("  Continuing without flush...")
+
             # Stage 2: Database
             try:
                 self.logger.debug("Stage 2: Initializing database...")
@@ -382,7 +459,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--judge",
         type=str,
-        default="llama-3.1-8b-instant",
+        default=os.getenv("JUDGE_MODEL_NAME", "openai/gpt-oss-20b"),
         help="Judge LLM model name for evaluation",
     )
     parser.add_argument(
@@ -397,6 +474,16 @@ def parse_arguments() -> argparse.Namespace:
         nargs="+",
         help="Filter attack vectors by category (DAN, ROLEPLAY_EXPLOIT, PROMPT_INJECTION, etc)",
     )
+    parser.add_argument(
+        "--auto-flush",
+        action="store_true",
+        default=False,
+        dest="auto_flush",
+        help=(
+            "Restart Docker's 'ollama' container before benchmarking to clear "
+            "the KV-cache (equivalent to: docker restart ollama)."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -408,6 +495,7 @@ async def main() -> None:
         judge=args.judge,
         concurrency=args.concurrency,
         categories=args.categories,
+        auto_flush=args.auto_flush,
     )
     await orchestrator.orchestrate()
 

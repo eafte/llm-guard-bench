@@ -4,7 +4,7 @@ Adversarial attack benchmark for evaluating LLM robustness against prompt inject
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue)](https://www.python.org/)
-[![Repo: eis-1/llm-guard-bench](https://img.shields.io/badge/GitHub-eis--1%2Fllm--guard--bench-black)](https://github.com/eis-1/llm-guard-bench)
+[![Repo: eafte/llm-guard-bench](https://img.shields.io/badge/GitHub-eafte%2Fllm--guard--bench-black)](https://github.com/eafte/llm-guard-bench)
 
 ---
 
@@ -14,7 +14,7 @@ Adversarial attack benchmark for evaluating LLM robustness against prompt inject
 
 ```bash
 # Clone repository
-git clone https://github.com/eis-1/llm-guard-bench.git
+git clone https://github.com/eafte/llm-guard-bench.git
 cd llm-guard-bench
 
 # Create virtual environment
@@ -93,6 +93,7 @@ TARGET_PROVIDER=ollama              # Options: ollama, groq, openai, anthropic
 
 # Judge LLM provider (for semantic evaluation)
 JUDGE_PROVIDER=groq                 # Options: groq, openai, anthropic
+JUDGE_MODEL_NAME=openai/gpt-oss-20b # Groq judge model
 
 # API keys (get free Groq key at https://console.groq.com)
 GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxx
@@ -116,6 +117,19 @@ LOG_LEVEL=INFO
 ---
 
 ## Running Benchmarks
+
+### Limited-VRAM Recommendation
+
+For GPUs with less than 6GB of VRAM, run with concurrency 1 to avoid
+exhausting Ollama memory or making the host Ollama service unresponsive:
+
+```bash
+python main.py --target phi3:mini --concurrency 1
+```
+
+Concurrency 1 is also the default in the runtime configuration. If Ollama
+becomes temporarily unreachable, the benchmark performs a health check before
+each attack and retries connection failures with 10s, 30s, and 60s backoff.
 
 ### CLI Options
 
@@ -165,7 +179,7 @@ config/prompts.json
        ↓
 BenchmarkPipeline (async, concurrency-controlled)
 ├→ OllamaAdapter.generate() — target model
-│   (30s timeout, auto-retry on 429/5xx)
+│   (health check before each attack; connection retry at 10s/30s/60s)
 ├→ EvaluationEngine.evaluate()
 │   ├→ Stage 1: KeywordEvaluator
 │   │   • Pattern: "i cannot" → PASSED
@@ -184,14 +198,15 @@ ResultsAggregator
 
 ### Error Handling
 
-| Condition              | Result         | Behavior                                        |
-| ---------------------- | -------------- | ----------------------------------------------- |
-| Target timeout (>30s)  | TIMEOUT        | Logged, batch continues                         |
-| Target error (4xx/5xx) | EVAL_ERROR     | Message captured, batch continues               |
-| Judge error            | EVAL_ERROR     | Caught, batch continues                         |
-| Judge unparseable      | FAILED         | Excluded from vulnerability rate                |
-| HTTP 429 (rate limit)  | Retry          | Exponential backoff (1s, 2s, 4s) max 3 attempts |
-| Database write fails   | JSONL fallback | Metrics computed from JSON                      |
+| Condition                 | Result         | Behavior                                                  |
+| ------------------------- | -------------- | --------------------------------------------------------- |
+| Target timeout (>30s)     | TIMEOUT        | Logged, batch continues                                   |
+| Target error (4xx/5xx)    | EVAL_ERROR     | Message captured, batch continues                         |
+| Judge error               | EVAL_ERROR     | Caught, batch continues                                   |
+| Judge unparseable         | FAILED         | Excluded from vulnerability rate                          |
+| Ollama connection failure | Retry          | Backoff at 10s, 30s, 60s; health check before each attack |
+| HTTP 429 (rate limit)     | Retry          | Provider/evaluator retry handling                         |
+| Database write fails      | JSONL fallback | Metrics computed from JSON                                |
 
 ---
 
@@ -321,7 +336,7 @@ git commit -m "feat: add context-injection attack"
 # Push
 git push origin feature/my-attack
 
-# Open PR at https://github.com/eis-1/llm-guard-bench/pulls
+# Open PR at https://github.com/eafte/llm-guard-bench/pulls
 ```
 
 **PR Requirements:**
@@ -380,7 +395,7 @@ MIT. See [LICENSE](LICENSE).
   title = {LLM Guard Bench: Adversarial Attack Evaluation Framework},
   author = {Islam, Md Eaftekhirul},
   year = {2026},
-  url = {https://github.com/eis-1/llm-guard-bench}
+  url = {https://github.com/eafte/llm-guard-bench}
 }
 ```
 
@@ -388,8 +403,8 @@ MIT. See [LICENSE](LICENSE).
 
 ## Links
 
-- **Repository:** https://github.com/eis-1/llm-guard-bench
-- **Issues:** https://github.com/eis-1/llm-guard-bench/issues
-- **Pull Requests:** https://github.com/eis-1/llm-guard-bench/pulls
+- **Repository:** https://github.com/eafte/llm-guard-bench
+- **Issues:** https://github.com/eafte/llm-guard-bench/issues
+- **Pull Requests:** https://github.com/eafte/llm-guard-bench/pulls
 - **Ollama:** https://ollama.ai
 - **Groq Console:** https://console.groq.com

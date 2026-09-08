@@ -1,45 +1,242 @@
-# Python Runtime
+# LLM Guard Bench - Production-Grade .gitignore
+
+# ============================================================================
+# PYTHON RUNTIME & CACHE
+# ============================================================================
 __pycache__/
 *.pyc
 *.pyo
-*.egg-info/
+*.pyd
 .pytest_cache/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
 dist/
 build/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# Virtual Environments
+# ============================================================================
+# VIRTUAL ENVIRONMENTS
+# ============================================================================
 .venv/
+.env.venv/
 venv/
 ENV/
 env/
+.Python
+env.bak/
+venv.bak/
+bin/
+lib/
+include/
+.env/
+*.env
 
-# IDEs
+# ============================================================================
+# IDE & EDITOR ARTIFACTS
+# ============================================================================
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 .DS_Store
+Thumbs.db
+.sublime-project
+.sublime-workspace
+*.iml
+*.iws
+*.ipr
+.project
+.settings/
+.classpath
+.c9/
+*.launch
+.nrepl-port
+.emacs.desktop
+.emacs.desktop.lock
+*_flymake.py
+.ropeproject/
+.pytest_cache/
+.coverage
+htmlcov/
 
-# Environment Secrets & Configuration
+# ============================================================================
+# SECURITY: ENVIRONMENT & CREDENTIALS (CRITICAL)
+# ============================================================================
 .env
 .env.local
 .env.*.local
+.env.*.example
+.env.production
+.env.staging
+.env.development
+secrets/
+*.key
+*.pem
+*.pfx
+*.p12
+.aws/
+.azure/
 
-# Runtime Artifacts
+# ============================================================================
+# RUNTIME ARTIFACTS & LOGS
+# ============================================================================
+*.log
+*.log.*
+logs/
+debug.log
+error.log
+.cache/
+.tmp/
+tmp/
+temp/
+*.tmp
+*.cache
+
+# ============================================================================
+# DATABASE & SESSION FILES
+# ============================================================================
+*.db
+*.sqlite
+*.sqlite3
 results/guard_bench.db
 results/session_*.jsonl
 results/*.png
 results/test_*.png
-results/vulnerability_report.png
+results/test_*.jpg
+results/*.db
+results/*.jsonl
 
-# Build Artifacts & Temporary Files
-*.log
-*.log.*
-.cache/
-.tmp/
+# ============================================================================
+# DOCKER & CONTAINER ARTIFACTS
+# ============================================================================
+.docker/
+.dockerignore
+docker-compose.override.yml
+docker-compose.prod.yml
 
-# OS Files
+# ============================================================================
+# OS-SPECIFIC FILES
+# ============================================================================
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 .windows-terminal-settings.json
+desktop.ini
+$RECYCLE.BIN/
+
+# ============================================================================
+# MYPY & TYPE CHECKING
+# ============================================================================
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# ============================================================================
+# PYTEST & TESTING
+# ============================================================================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# ============================================================================
+# JUPYTER NOTEBOOKS (if used)
+# ============================================================================
+.ipynb_checkpoints
+*.ipynb
+
+# ============================================================================
+# DEVELOPMENT DOCUMENTATION BUILDS
+# ============================================================================
+docs/_build/
+docs/.buildinfo
+site/
+
+# ============================================================================
+# PROJECT-SPECIFIC DEVELOPMENT ARTIFACTS
+# ============================================================================
+benchmark_results_*.json
+*.bak
+*.orig
+*~
+.idea/
+.vscode/settings.json
+
+# ============================================================================
+# NODE.js (if any frontend components exist)
+# ============================================================================
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# ============================================================================
+# TERRAFORM & INFRASTRUCTURE-AS-CODE
+# ============================================================================
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# ============================================================================
+# MISC UNTRACKED FILES
+# ============================================================================
+*.swp
+*.swa
+*~
+.netrwhist
+Session.vim
+.vim/
+.LSP/
+
+# ============================================================================
+# GIT CONFIGURATION
+# ============================================================================
+.git/
+.gitattributes
+.gitignore_local
+
+# ============================================================================
+# IMPORTANT: DO NOT IGNORE THESE ESSENTIAL FILES
+# ============================================================================
+# Ensure the following are tracked in git:
+# !.env.example
+# !setup.py
+# !requirements.txt
+# !README.md
+# !LICENSE
+# !Dockerfile
+# !docker-compose.yml
+# !.github/
+# !/config/prompts.json
+.env
+results/*.db
+results/*.png

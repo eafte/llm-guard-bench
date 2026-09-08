@@ -12,7 +12,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Literal, Optional
-
+from pydantic import BaseModel, Field
+from typing import List, Literal
 from pydantic import BaseModel, model_validator
 
 
@@ -48,16 +49,45 @@ SeverityType = Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
 # ---------------------------------------------------------------------------
 # AttackDefinition — loaded from config/prompts.json by core/loader.py
 # ---------------------------------------------------------------------------
-class AttackDefinition(BaseModel, frozen=True):
-    attack_id:          str
-    category:           AttackCategoryType   # v3.0: was attack_category
-    attack_name:        str
-    description:        str
-    adversarial_prompt: str
-    system_prompt:      Optional[str]            = None
-    expected_behavior:  Literal["REFUSAL"]       = "REFUSAL"
-    severity:           SeverityType
-    tags:               list[str]
+
+class AttackDefinition(BaseModel):
+    attack_id: str
+    attack_name: str
+    description: str
+    category: str
+    # Support both uppercase and lowercase severity values
+    severity: Literal['LOW', 'MEDIUM', 'HIGH', 'CRITICAL', 'low', 'medium', 'high', 'critical']
+    tags: List[str]
+    turns: List[str]  # Sequential conversation turns for multi-turn attack evaluation
+    system_prompt: Optional[str] = None  # Optional system prompt for context
+
+    @property
+    def adversarial_prompt(self) -> str:
+        """
+        Construct a single string representation of the multi-turn conversation
+        by concatenating all turns with newlines. Used for storage in TestResult.
+        """
+        return "\n".join(self.turns) if self.turns else ""
+
+    def build_messages(self) -> list[dict[str, str]]:
+        """
+        Build a multi-turn message history for chat-based adapters.
+        Returns a list of dicts with 'role' and 'content' keys.
+        """
+        messages = []
+        # Add system prompt if present
+        if self.system_prompt:
+            messages.append({"role": "system", "content": self.system_prompt})
+        # Add user turns alternating with assistant context (for realism in multi-turn)
+        for i, turn in enumerate(self.turns):
+            if i == 0:
+                # First turn is always a user message
+                messages.append({"role": "user", "content": turn})
+            else:
+                # Alternate: odd indices are user, even indices could be assistant for context
+                # In this implementation, all turns are user messages (the model's responses aren't in the turns list)
+                messages.append({"role": "user", "content": turn})
+        return messages
 
 
 # ---------------------------------------------------------------------------

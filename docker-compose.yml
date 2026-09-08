@@ -32,7 +32,6 @@ services:
       # Override localhost to reach host machine's Ollama
       # OLLAMA_BASE_URL will be read from settings.py as "http://host.docker.internal:11434"
       OLLAMA_ENDPOINT: "http://host.docker.internal:11434"
-      
       # Python runtime
       PYTHONUNBUFFERED: "1"
       PYTHONDONTWRITEBYTECODE: "1"

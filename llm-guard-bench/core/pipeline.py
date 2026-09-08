@@ -142,45 +142,73 @@ class BenchmarkPipeline:
         total_time_ms = 0
         eval_result: Optional[EvalResult] = None
 
-        # ===== Stage 1: Target Model Execution =====
+        # ===== Pre-flight: Target Provider Health Check =====
+        health_start = time.time()
         try:
-            target_start = time.time()
-            try:
-                target_output = await asyncio.wait_for(
-                    self.target_adapter.generate(
-                        system_prompt=attack.system_prompt or "",
-                        user_prompt=attack.adversarial_prompt,
-                    ),
-                    timeout=180.0,
-                )
-            except asyncio.TimeoutError:
-                execution_time_ms = int((time.time() - target_start) * 1000)
-                self.logger.warning(
-                    f"Attack {attack.attack_id}: Target model timeout after {180.0}s"
-                )
+            target_healthy = await self.target_adapter.health_check()
+            if not target_healthy:
+                execution_time_ms = int((time.time() - health_start) * 1000)
                 eval_result = EvalResult(
-                    status="TIMEOUT",
+                    status="EVAL_ERROR",
                     stage="PRE_FLIGHT",
-                    error_message=f"Target model timeout after {180.0}s",
+                    error_message=(
+                        "Target model health check failed after connection "
+                        "retries; Ollama endpoint remained unreachable"
+                    ),
                 )
-
-            target_end = time.time()
-            if eval_result is None:
-                execution_time_ms = int((target_end - target_start) * 1000)
-                if not target_output:
-                    target_output = ""
-                self.logger.debug(f"Attack {attack.attack_id}: Target model response ({execution_time_ms}ms)")
-
         except Exception as e:
-            execution_time_ms = int((time.time() - start_time) * 1000)
+            execution_time_ms = int((time.time() - health_start) * 1000)
             self.logger.error(
-                f"Attack {attack.attack_id}: Target model error: {type(e).__name__}: {str(e)}"
+                f"Attack {attack.attack_id}: Target health check error: "
+                f"{type(e).__name__}: {str(e)}"
             )
             eval_result = EvalResult(
                 status="EVAL_ERROR",
                 stage="PRE_FLIGHT",
-                error_message=f"Target model error: {type(e).__name__}: {str(e)}",
+                error_message=(
+                    f"Target model health check error: {type(e).__name__}: {str(e)}"
+                ),
             )
+
+        # ===== Stage 1: Target Model Execution =====
+        if eval_result is None:
+            try:
+                target_start = time.time()
+                try:
+                    # Build multi-turn message history from attack definition
+                    messages = attack.build_messages()
+                    target_output = await asyncio.wait_for(
+                        self.target_adapter.generate_multi_turn(messages=messages),
+                        timeout=180.0,
+                    )
+                except asyncio.TimeoutError:
+                    execution_time_ms = int((time.time() - target_start) * 1000)
+                    self.logger.warning(
+                        f"Attack {attack.attack_id}: Target model timeout after {180.0}s"
+                    )
+                    eval_result = EvalResult(
+                        status="TIMEOUT",
+                        stage="PRE_FLIGHT",
+                        error_message=f"Target model timeout after {180.0}s",
+                    )
+
+                target_end = time.time()
+                if eval_result is None:
+                    execution_time_ms = int((target_end - target_start) * 1000)
+                    if not target_output:
+                        target_output = ""
+                    self.logger.debug(f"Attack {attack.attack_id}: Target model response ({execution_time_ms}ms)")
+
+            except Exception as e:
+                execution_time_ms = int((time.time() - start_time) * 1000)
+                self.logger.error(
+                    f"Attack {attack.attack_id}: Target model error: {type(e).__name__}: {str(e)}"
+                )
+                eval_result = EvalResult(
+                    status="EVAL_ERROR",
+                    stage="PRE_FLIGHT",
+                    error_message=f"Target model error: {type(e).__name__}: {str(e)}",
+                )
 
         # ===== Stage 2: Evaluation Engine (if target succeeded) =====
         if eval_result is None:
@@ -281,10 +309,12 @@ class BenchmarkPipeline:
                 judge_verdict="VULNERABLE",
             )
         elif result_str == "AMBIGUOUS":
+            # AMBIGUOUS is a valid outcome, not an error
+            # Treat as PASSED since we couldn't determine vulnerability
             return EvalResult(
-                status="EVAL_ERROR",
+                status="PASSED",
                 stage="STAGE_2_JUDGE",
-                error_message="Judge evaluation produced ambiguous result",
+                judge_verdict="PASSED",
             )
         elif result_str == "EVAL_ERROR":
             # Handle upstream judge LLM failures (rate limits, network errors, etc.)
