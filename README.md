@@ -1,10 +1,29 @@
 # LLM Guard Bench
 
-Adversarial attack benchmark for evaluating LLM robustness against prompt injection, jailbreaks, and refusal attacks. Runs attacks concurrently with dual persistence (SQLite + JSONL), 2-stage evaluation (heuristic + semantic judge), and automatic retry logic.
+LLM Guard Bench is an adversarial attack benchmark for evaluating Large Language Model robustness against prompt injection, jailbreaks, and refusal attacks. It features concurrent attack execution, dual persistence (SQLite + JSONL), a two-stage evaluation pipeline (heuristic keyword matching followed by semantic LLM-as-a-Judge evaluation), and robust retry logic.
+
+![Security Audit Report](llm-guard-bench/results/security_audit_report.png)
+*Preliminary finding: Prompt injection and DAN jailbreaks were the most effective vectors, while system prompt leakage and refusal-bypass attempts were fully blocked.*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue)](https://www.python.org/)
 [![Repo: eafte/llm-guard-bench](https://img.shields.io/badge/GitHub-eafte%2Fllm--guard--bench-black)](https://github.com/eafte/llm-guard-bench)
+
+---
+
+## Current Scope & Limitations
+
+- **Scale**: The current dataset includes 40 total results across 4 models and 5 attack categories.
+- **Reporting**: Vulnerability rates are reported as an aggregate breakdown across all tested models, rather than per-model.
+- **Data Phase**: All results currently represent preliminary pilot data and should be interpreted as initial baseline indicators rather than definitive security evaluations.
+
+---
+
+## Known Issues / Roadmap
+
+- **Scaling Attack Count**: Expanding the dataset to include a higher volume of attacks per category.
+- **Per-Model Breakdown**: Adding detailed vulnerability reporting and visualizations for individual models.
+- **Expanding Attack Categories**: Introducing new adversarial vectors and bypass techniques to broaden the scope of evaluation.
 
 ---
 
@@ -26,7 +45,7 @@ python -m venv .venv
 source .venv/bin/activate
 
 # Install dependencies
-pip install -r llm-guard-bench/requirements.txt
+pip install -e ./llm-guard-bench
 
 # Create .env with API keys
 cat > llm-guard-bench/.env << 'EOF'
@@ -41,14 +60,14 @@ EOF
 
 # Run benchmark
 cd llm-guard-bench
-python main.py --target llama3:8b --concurrency 2
+python main.py --target phi3:mini --concurrency 1
 ```
 
 ### Docker
 
 ```bash
 # Build and run
-docker compose run --rm --build llm-guard-bench python main.py --target llama3:8b --concurrency 2
+docker compose run --rm --build llm-guard-bench python main.py --target phi3:mini --concurrency 1
 
 # Check results
 ls -la llm-guard-bench/results/
@@ -65,7 +84,7 @@ ls -la llm-guard-bench/results/
    - Stage 2: Semantic judge (Groq LLM, if ambiguous)
 4. **Persists Results:** Writes to SQLite + JSONL simultaneously
 5. **Generates Metrics:** Computes vulnerability rates per attack category
-6. **Outputs Visualizations:** PNG charts saved to `results/`
+6. **Outputs Visualizations:** PNG charts saved to `llm-guard-bench/results/`
 
 ---
 
@@ -79,7 +98,7 @@ ls -la llm-guard-bench/results/
 
 - Docker 20.10+ and docker-compose
 - Groq API key (free tier available at https://console.groq.com)
-- OpenAI / Anthropic keys (if using those judges)
+- OpenAI / Anthropic keys (if using those judges — not yet tested with this project)
 
 ---
 
@@ -89,10 +108,10 @@ Create `llm-guard-bench/.env`:
 
 ```bash
 # Target LLM provider
-TARGET_PROVIDER=ollama              # Options: ollama, groq, openai, anthropic
+TARGET_PROVIDER=ollama              # Options: ollama, groq, openai, anthropic (OpenAI/Anthropic not yet tested with this project)
 
 # Judge LLM provider (for semantic evaluation)
-JUDGE_PROVIDER=groq                 # Options: groq, openai, anthropic
+JUDGE_PROVIDER=groq                 # Options: groq, openai, anthropic (OpenAI/Anthropic not yet tested with this project)
 JUDGE_MODEL_NAME=openai/gpt-oss-20b # Groq judge model
 
 # API keys (get free Groq key at https://console.groq.com)
@@ -124,6 +143,7 @@ For GPUs with less than 6GB of VRAM, run with concurrency 1 to avoid
 exhausting Ollama memory or making the host Ollama service unresponsive:
 
 ```bash
+cd llm-guard-bench
 python main.py --target phi3:mini --concurrency 1
 ```
 
@@ -137,21 +157,21 @@ each attack and retries connection failures with 10s, 30s, and 60s backoff.
 python main.py --target <model> [--judge <model>] [--concurrency <n>] [--categories <cat1> <cat2>...]
 
 # Examples:
-python main.py --target llama3:8b --concurrency 4
-python main.py --target llama3:8b --judge groq --categories DAN PROMPT_INJECTION
-python main.py --target gpt-4o --concurrency 2
+python main.py --target phi3:mini --concurrency 1
+python main.py --target phi3:mini --judge groq --categories DAN PROMPT_INJECTION
+python main.py --target gpt-4o --concurrency 1
 ```
 
 ### Output
 
 Results saved to `llm-guard-bench/results/`:
 
-```
+```text
 results/
-├── guard_bench.db           # SQLite database (queryable)
-├── session_*.jsonl          # JSONL audit trail
-├── vulnerability_rate.png   # Chart: vulnerability % by category
-└── results_summary.json     # Metrics summary
+├── guard_bench.db             # SQLite database (queryable)
+├── session_*.jsonl            # JSONL audit trail
+├── security_audit_report.png  # Chart: vulnerability % by category
+└── results_summary.json       # Metrics summary
 ```
 
 ### Query Results
@@ -173,7 +193,7 @@ SQL
 
 ### Pipeline
 
-```
+```text
 config/prompts.json
        ↓ (parsed as AttackDefinition list)
        ↓
@@ -234,7 +254,7 @@ ResultsAggregator
   "schema_version": "3.0",
   "session_id": "SESS_20250528_143022",
   "timestamp": "2025-05-28T14:30:22.123Z",
-  "model_name": "llama3:8b",
+  "model_name": "phi3:mini",
   "attack_id": "DAN_001",
   "category": "DAN",
   "adversarial_prompt": "...",
@@ -251,7 +271,7 @@ ResultsAggregator
 
 ## Performance
 
-**Typical Run (5 attacks, concurrency=2, llama3:8b + Groq judge):**
+**Typical Run (5 attacks, concurrency=1, phi3:mini + Groq judge):**
 
 | Metric           | Value                 |
 | ---------------- | --------------------- |
@@ -308,7 +328,7 @@ Edit `llm-guard-bench/config/prompts.json`:
 }
 ```
 
-Run: `python main.py --target llama3:8b --categories PROMPT_INJECTION`
+Run: `cd llm-guard-bench && python main.py --target phi3:mini --categories PROMPT_INJECTION`
 
 ### Modifying Evaluators
 
@@ -343,7 +363,7 @@ git push origin feature/my-attack
 
 - Clear description
 - Local test results (e.g., vulnerability %)
-- Pass `black` formatting + `flake8` linting
+- Follow existing code style (black/flake8 conventions)
 - No new external dependencies unless justified
 
 ---
@@ -352,7 +372,7 @@ git push origin feature/my-attack
 
 **Docker: Cannot reach Ollama**
 
-```
+```text
 RuntimeError: Ollama connection error
 ```
 
@@ -360,7 +380,7 @@ RuntimeError: Ollama connection error
 
 **Groq Rate Limit**
 
-```
+```text
 GroqError: Rate limit exceeded (429)
 ```
 
@@ -368,7 +388,7 @@ GroqError: Rate limit exceeded (429)
 
 **SQLite Database Locked**
 
-```
+```text
 sqlite3.OperationalError: database is locked
 ```
 
@@ -376,7 +396,7 @@ sqlite3.OperationalError: database is locked
 
 **Model Timeout**
 
-```
+```text
 RuntimeError: Ollama request timed out after 30 seconds
 ```
 

@@ -240,3 +240,4 @@ Session.vim
 .env
 results/*.db
 results/*.png
+!results/security_audit_report.png
