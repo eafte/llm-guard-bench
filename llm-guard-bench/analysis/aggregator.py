@@ -570,7 +570,7 @@ class ResultsAggregator:
             # ── Header ───────────────────────────────────────────────────────
             fig.text(
                 0.5, 0.977,
-                "PROJECT BEST: LLM GUARD BENCH",
+                "LLM Guard Bench — Adversarial Robustness Evaluation",
                 ha="center", va="top",
                 fontsize=24, fontweight="bold",
                 color=TEXT_PRIMARY, family="monospace",
