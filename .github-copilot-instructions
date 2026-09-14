@@ -1,2 +1,0 @@
-- All code generation must strictly comply with the architecture, definitions, and code blocks specified in 'LLM_Guard_Bench_Blueprint_v3.md'.
-- Do not deviate from the database schemas, function models, or async client definitions written in the blueprint.
