@@ -1,9 +1,9 @@
 import json
-from pathlib import Path
-from typing import Optional, List, Dict, Any
 import logging
+from pathlib import Path
+from typing import Any
 
-from core.models import AttackDefinition
+from llm_guard_bench.domain.models import AttackDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -12,9 +12,7 @@ class AttackLoader:
     """Loads and manages attack definitions from configuration files."""
 
     @staticmethod
-    def load_prompts(
-        file_path: str, categories: Optional[List[str]] = None
-    ) -> List[AttackDefinition]:
+    def load_prompts(file_path: str, categories: list[str] | None = None) -> list[AttackDefinition]:
         """
         Load and parse attack definitions from a JSON file with optional category filtering.
 
@@ -42,7 +40,7 @@ class AttackLoader:
             raise ValueError(f"Attacks file is empty: {file_path}")
 
         try:
-            with open(file_path_obj, "r", encoding="utf-8") as f:
+            with open(file_path_obj, encoding="utf-8") as f:
                 data: Any = json.load(f)
         except json.JSONDecodeError as e:
             raise json.JSONDecodeError(
@@ -70,7 +68,7 @@ class AttackLoader:
             return []
 
         # Convert raw dicts to AttackDefinition objects and filter by categories if provided
-        attack_definitions: List[AttackDefinition] = []
+        attack_definitions: list[AttackDefinition] = []
 
         if categories is None:
             # Return all attacks if no categories specified
@@ -86,7 +84,7 @@ class AttackLoader:
             for attack_dict in attacks_list:
                 try:
                     if isinstance(attack_dict, dict):
-                        attack_category: Optional[str] = attack_dict.get("category")
+                        attack_category: str | None = attack_dict.get("category")
                         if attack_category in category_set:
                             attack_def = AttackDefinition(**attack_dict)
                             attack_definitions.append(attack_def)

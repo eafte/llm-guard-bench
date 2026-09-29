@@ -1,0 +1,29 @@
+# Secrets: never bake these into an image
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+
+# Version control and tooling
+.git
+.gitignore
+.github
+.venv
+venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Local data (may contain raw prompts and model outputs)
+results
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.jsonl
+
+# Editor and OS files
+.vscode
+.idea
+.DS_Store

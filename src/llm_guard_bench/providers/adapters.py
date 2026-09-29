@@ -19,13 +19,13 @@ Each adapter:
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import pathlib
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Any
 
 import aiohttp
-import logging
 from groq import AsyncGroq
 
 
@@ -37,7 +37,7 @@ class BaseAdapter(ABC):
         self,
         system_prompt: str,
         user_prompt: str,
-        override_temperature: float = None,
+        override_temperature: float | None = None,
     ) -> str:
         """Generate a model response for the provided prompts."""
         raise NotImplementedError
@@ -46,7 +46,7 @@ class BaseAdapter(ABC):
     async def generate_multi_turn(
         self,
         messages: list[dict[str, str]],
-        override_temperature: float = None,
+        override_temperature: float | None = None,
     ) -> str:
         """
         Generate a model response for multi-turn conversation.
@@ -90,7 +90,7 @@ class OllamaAdapter(BaseAdapter):
                         logging.getLogger(__name__).warning(
                             f"Ollama health check returned HTTP {response.status}"
                         )
-            except (aiohttp.ClientConnectionError, asyncio.TimeoutError) as exc:
+            except (TimeoutError, aiohttp.ClientConnectionError) as exc:
                 logging.getLogger(__name__).warning(
                     f"Ollama health check failed on attempt {attempt + 1}/"
                     f"{len(self.CONNECTION_RETRY_DELAYS) + 1}: {exc}"
@@ -98,9 +98,7 @@ class OllamaAdapter(BaseAdapter):
 
             if attempt < len(self.CONNECTION_RETRY_DELAYS):
                 delay = self.CONNECTION_RETRY_DELAYS[attempt]
-                logging.getLogger(__name__).warning(
-                    f"Retrying Ollama health check in {delay}s"
-                )
+                logging.getLogger(__name__).warning(f"Retrying Ollama health check in {delay}s")
                 await asyncio.sleep(delay)
 
         return False
@@ -120,7 +118,7 @@ class OllamaAdapter(BaseAdapter):
                                 f"Ollama API error (status={response.status}): {body}"
                             )
                         return await response.json(content_type=None)
-            except asyncio.TimeoutError as exc:
+            except TimeoutError as exc:
                 raise RuntimeError(
                     f"Ollama request timed out after {self.timeout_seconds} seconds"
                 ) from exc
@@ -148,12 +146,10 @@ class OllamaAdapter(BaseAdapter):
         self,
         system_prompt: str,
         user_prompt: str,
-        override_temperature: float = None,
+        override_temperature: float | None = None,
     ) -> str:
         temperature = (
-            override_temperature
-            if override_temperature is not None
-            else self.default_temperature
+            override_temperature if override_temperature is not None else self.default_temperature
         )
         payload: dict[str, Any] = {
             "model": self.model_name,
@@ -190,13 +186,11 @@ class OllamaAdapter(BaseAdapter):
     async def generate_multi_turn(
         self,
         messages: list[dict[str, str]],
-        override_temperature: float = None,
+        override_temperature: float | None = None,
     ) -> str:
         """Generate response for multi-turn conversation."""
         temperature = (
-            override_temperature
-            if override_temperature is not None
-            else self.default_temperature
+            override_temperature if override_temperature is not None else self.default_temperature
         )
         payload: dict[str, Any] = {
             "model": self.model_name,
@@ -289,7 +283,7 @@ class GroqAdapter(BaseAdapter):
                 messages=messages,
                 temperature=temperature,
             )
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             raise RuntimeError(
                 f"Groq network failure: request timed out after {self.timeout_seconds} seconds"
             ) from exc
@@ -300,12 +294,10 @@ class GroqAdapter(BaseAdapter):
         self,
         system_prompt: str,
         user_prompt: str,
-        override_temperature: float = None,
+        override_temperature: float | None = None,
     ) -> str:
         temperature = (
-            override_temperature
-            if override_temperature is not None
-            else self.default_temperature
+            override_temperature if override_temperature is not None else self.default_temperature
         )
 
         completion = await self._request_completion(
@@ -341,13 +333,11 @@ class GroqAdapter(BaseAdapter):
     async def generate_multi_turn(
         self,
         messages: list[dict[str, str]],
-        override_temperature: float = None,
+        override_temperature: float | None = None,
     ) -> str:
         """Generate response for multi-turn conversation."""
         temperature = (
-            override_temperature
-            if override_temperature is not None
-            else self.default_temperature
+            override_temperature if override_temperature is not None else self.default_temperature
         )
 
         completion = await self._request_completion(messages, temperature)
@@ -377,7 +367,7 @@ class GroqAdapter(BaseAdapter):
 def _get_default_ollama_url() -> str:
     """
     Determine Ollama base URL based on environment and execution context.
-    
+
     Priority:
     1. OLLAMA_BASE_URL environment variable (explicit override)
     2. OLLAMA_ENDPOINT environment variable (Docker Compose default)
@@ -387,20 +377,20 @@ def _get_default_ollama_url() -> str:
     # Priority 1: Explicit environment variable
     if env_url := os.getenv("OLLAMA_BASE_URL"):
         return env_url
-    
+
     # Priority 2: Docker Compose OLLAMA_ENDPOINT
     if env_url := os.getenv("OLLAMA_ENDPOINT"):
         return env_url
-    
+
     # Priority 3: Running in Docker container (check for /.dockerenv marker)
     if pathlib.Path("/.dockerenv").exists():
         return "http://host.docker.internal:11434"
-    
+
     # Fallback: localhost (for local development)
     return "http://localhost:11434"
 
 
-def get_adapter(provider: str, model_name: str, api_key: str = None) -> BaseAdapter:
+def get_adapter(provider: str, model_name: str, api_key: str | None = None) -> BaseAdapter:
     """Factory for provider-specific adapters."""
     normalized = (provider or "").strip().lower()
 

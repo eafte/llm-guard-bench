@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "refactor/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package with dev tools
+        run: python -m pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check src tests
+
+      - name: Format check
+        run: ruff format --check src tests
+
+      - name: Type check (baseline gate)
+        run: |
+          count=$(mypy 2>&1 | grep -c " error:" || true)
+          echo "mypy errors: $count (baseline: 10)"
+          test "$count" -le 10
+
+      - name: Tests
+        run: python -m pytest tests -q
