@@ -16,7 +16,7 @@ from llm_guard_bench.settings import DB_PATH, RESULTS_DIR
 
 logger = logging.getLogger(__name__)
 
-_MIGRATION_PATH = Path(__file__).parent / "migrations" / "001_initial_schema.sql"
+_MIGRATION_PATH = Path(__file__).parent / "sql" / "001_initial_schema.sql"
 
 # ============================================================================
 # REQUIRED TABLES (v3.0) — Enforced by validator
