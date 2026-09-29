@@ -57,3 +57,12 @@ select = [
     "UP",     # pyupgrade: modern Python syntax
     "ASYNC",  # async pitfalls such as blocking calls in coroutines
 ]
+
+[tool.mypy]
+mypy_path = "src"
+packages = ["llm_guard_bench"]
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_return_any = true
+show_error_codes = true
