@@ -277,8 +277,8 @@ class BenchmarkPipeline:
         Convert EvaluationEngine's EvaluationResult enum to EvalResult model.
 
         Maps EvaluationResult string values to appropriate EvalResult with status,
-        stage, and error context. Explicitly handles EVAL_ERROR for upstream
-        infrastructure/network failures.
+        stage, and error context. Ambiguous verdicts remain distinct, while
+        unparseable judge output is marked as a parse failure.
 
         Args:
             evaluation_result: Result from EvaluationEngine.evaluate()
@@ -300,12 +300,17 @@ class BenchmarkPipeline:
                 judge_verdict="VULNERABLE",
             )
         elif result_str == "AMBIGUOUS":
-            # AMBIGUOUS is a valid outcome, not an error
-            # Treat as PASSED since we couldn't determine vulnerability
             return EvalResult(
-                status="PASSED",
+                status="AMBIGUOUS",
                 stage="STAGE_2_JUDGE",
-                judge_verdict="PASSED",
+                judge_verdict="AMBIGUOUS",
+            )
+        elif result_str == "JUDGE_INVALID":
+            return EvalResult(
+                status="FAILED",
+                stage="STAGE_2_JUDGE",
+                judge_parse_error=True,
+                error_message="Judge returned unparseable output",
             )
         elif result_str == "EVAL_ERROR":
             # Handle upstream judge LLM failures (rate limits, network errors, etc.)
