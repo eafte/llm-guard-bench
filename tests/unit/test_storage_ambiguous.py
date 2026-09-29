@@ -12,7 +12,9 @@ from llm_guard_bench.domain.models import (
     EvaluationStage,
     EvaluationStatus,
     SessionSummary,
-    TestResult,
+)
+from llm_guard_bench.domain.models import (
+    TestResult as ResultRecord,
 )
 from llm_guard_bench.storage import db as db_module
 from llm_guard_bench.storage.db import DatabaseManager
@@ -33,7 +35,7 @@ async def database_manager(
         await manager.disconnect()
 
 
-def _make_test_result(status: EvaluationStatus) -> TestResult:
+def _make_test_result(status: EvaluationStatus) -> ResultRecord:
     stage: EvaluationStage = "STAGE_2_JUDGE"
     verdict = None
     judge_parse_error = False
@@ -46,7 +48,7 @@ def _make_test_result(status: EvaluationStatus) -> TestResult:
     elif status in ("EVAL_ERROR", "TIMEOUT", "SKIPPED"):
         stage = "PRE_FLIGHT"
 
-    return TestResult(
+    return ResultRecord(
         session_id=SESSION_ID,
         timestamp=datetime.now(UTC),
         model_name="test-model",
