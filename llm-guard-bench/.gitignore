@@ -127,7 +127,6 @@ results/*.jsonl
 # DOCKER & CONTAINER ARTIFACTS
 # ============================================================================
 .docker/
-.dockerignore
 docker-compose.override.yml
 docker-compose.prod.yml
 
