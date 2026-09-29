@@ -1,0 +1,10 @@
+# Normalize line endings: text files are stored and checked out with LF.
+* text=auto eol=lf
+
+# Never touch these.
+*.db binary
+*.db-wal binary
+*.db-shm binary
+*.png binary
+*.jpg binary
+*.pyc binary
