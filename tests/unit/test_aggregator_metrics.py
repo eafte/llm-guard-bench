@@ -73,3 +73,100 @@ def test_unknown_status_is_counted_but_excluded_from_rates() -> None:
 
 def test_status_categories_include_every_domain_evaluation_status() -> None:
     assert set(get_args(EvaluationStatus)).issubset(STATUS_CATEGORIES)
+
+
+def test_aggregate_by_category_tracks_all_known_buckets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    aggregator = ResultsAggregator(object())
+    monkeypatch.setattr(
+        aggregator,
+        "_load_configured_categories",
+        lambda: ["DAN", "ROLEPLAY_EXPLOIT"],
+    )
+    statuses = [
+        "PASSED",
+        "VULNERABLE",
+        "AMBIGUOUS",
+        "TIMEOUT",
+        "EVAL_ERROR",
+        "FAILED",
+        "SKIPPED",
+    ]
+    results = [{"category": "DAN", "evaluation_status": status} for status in statuses]
+
+    data = aggregator._aggregate_by_category(results)
+
+    assert data["DAN"]["AMBIGUOUS"] == 1
+    assert data["DAN"]["errors"] == 3
+    assert data["DAN"]["SKIPPED"] == 1
+    assert data["DAN"]["PASSED"] == 1
+    assert data["DAN"]["VULNERABLE"] == 1
+    assert data["DAN"]["total"] == 7
+
+
+def test_aggregate_by_category_counts_unknown_status_only_in_total(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    aggregator = ResultsAggregator(object())
+    monkeypatch.setattr(aggregator, "_load_configured_categories", lambda: ["DAN"])
+
+    data = aggregator._aggregate_by_category([{"category": "DAN", "evaluation_status": "BOGUS"}])
+
+    assert data["DAN"]["total"] == 1
+    assert data["DAN"]["PASSED"] == 0
+    assert data["DAN"]["VULNERABLE"] == 0
+    assert data["DAN"]["AMBIGUOUS"] == 0
+    assert data["DAN"]["errors"] == 0
+    assert data["DAN"]["SKIPPED"] == 0
+
+
+def test_aggregate_by_category_initializes_empty_configured_categories(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    aggregator = ResultsAggregator(object())
+    monkeypatch.setattr(
+        aggregator,
+        "_load_configured_categories",
+        lambda: ["DAN", "ROLEPLAY_EXPLOIT"],
+    )
+
+    data = aggregator._aggregate_by_category([])
+
+    assert data["DAN"] == {
+        "VULNERABLE": 0,
+        "PASSED": 0,
+        "AMBIGUOUS": 0,
+        "SKIPPED": 0,
+        "total": 0,
+        "errors": 0,
+    }
+    assert data["ROLEPLAY_EXPLOIT"] == data["DAN"]
+
+
+def test_aggregator_rates_match_heatmap_cell_rates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from llm_guard_bench.reporting import metrics as metrics_module
+
+    aggregator = ResultsAggregator(object())
+    monkeypatch.setattr(aggregator, "_load_configured_categories", lambda: ["DAN", "ROLEPLAY"])
+    results = [
+        {"category": "DAN", "evaluation_status": "PASSED", "execution_time_ms": 0},
+        {"category": "DAN", "evaluation_status": "VULNERABLE", "execution_time_ms": 0},
+        {"category": "DAN", "evaluation_status": "AMBIGUOUS", "execution_time_ms": 0},
+        {"category": "ROLEPLAY", "evaluation_status": "TIMEOUT", "execution_time_ms": 0},
+        {"category": "ROLEPLAY", "evaluation_status": "EVAL_ERROR", "execution_time_ms": 0},
+    ]
+
+    category_data = aggregator._aggregate_by_category(results)
+    summary = aggregator._compute_metrics(results, "test-session")
+    cells = metrics_module.heatmap_cell_values(category_data)
+    category_rates = summary["vulnerability_rates"]
+
+    for cell in cells:
+        category_rate = category_rates[cell.category]["rate"]
+        if cell.attack_success_rate is None:
+            assert category_rate is None
+        else:
+            assert category_rate == pytest.approx(cell.attack_success_rate, abs=0.01)

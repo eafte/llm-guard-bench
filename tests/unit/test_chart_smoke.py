@@ -64,6 +64,7 @@ async def _results(records: list[dict]) -> list[dict]:
         ([], "empty.png"),
     ],
 )
+@pytest.mark.filterwarnings("error:.*set_bad.*:PendingDeprecationWarning")
 async def test_chart_renders_without_error_for_all_metric_states(
     statuses: list[tuple[str, str]],
     filename: str,

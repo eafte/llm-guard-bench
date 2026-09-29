@@ -22,7 +22,12 @@ import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 
-from llm_guard_bench.reporting.metrics import OutcomeCounts, format_percent, run_health_label
+from llm_guard_bench.reporting.metrics import (
+    OutcomeCounts,
+    format_percent,
+    heatmap_cell_values,
+    run_health_label,
+)
 from llm_guard_bench.settings import RESULTS_DIR
 
 logger = logging.getLogger(__name__)
@@ -451,6 +456,8 @@ class ResultsAggregator:
             category: {
                 "VULNERABLE": 0,
                 "PASSED": 0,
+                "AMBIGUOUS": 0,
+                "SKIPPED": 0,
                 "total": 0,
                 "errors": 0,
             }
@@ -464,14 +471,16 @@ class ResultsAggregator:
                 category_data[category] = {
                     "VULNERABLE": 0,
                     "PASSED": 0,
+                    "AMBIGUOUS": 0,
+                    "SKIPPED": 0,
                     "total": 0,
                     "errors": 0,
                 }
 
             category_data[category]["total"] += 1
-            if status in ("VULNERABLE", "PASSED"):
+            if status in ("VULNERABLE", "PASSED", "AMBIGUOUS", "SKIPPED"):
                 category_data[category][status] += 1
-            else:
+            elif status in ("FAILED", "EVAL_ERROR", "TIMEOUT"):
                 category_data[category]["errors"] += 1
 
         return dict(category_data)
@@ -851,27 +860,25 @@ class ResultsAggregator:
             # Build ordered category list and per-category vuln rates.
             # Configured categories remain present even when every result is
             # an error and therefore has no valid vulnerability rate.
-            categories = sorted(category_data.keys())
-            if not categories:
-                categories = ["UNKNOWN"]
+            if not category_data:
                 category_data = {
                     "UNKNOWN": {
                         "VULNERABLE": 0,
                         "PASSED": 0,
+                        "AMBIGUOUS": 0,
+                        "SKIPPED": 0,
                         "total": 0,
                         "errors": 0,
                     }
                 }
 
-            vuln_rates = []
-            no_data_flags = []
-            for cat in categories:
-                d = category_data[cat]
-                valid_total = d.get("VULNERABLE", 0) + d.get("PASSED", 0)
-                no_data_flags.append(valid_total == 0)
-                vuln_rates.append(
-                    round(d.get("VULNERABLE", 0) / valid_total * 100) if valid_total > 0 else 0
-                )
+            cells = heatmap_cell_values(category_data)
+            categories = [cell.category for cell in cells]
+            vuln_rates = [
+                cell.attack_success_rate if cell.attack_success_rate is not None else 0.0
+                for cell in cells
+            ]
+            no_data_flags = [cell.decisive == 0 for cell in cells]
 
             n_cats = len(categories)
             heatmap_matrix = np.array(vuln_rates, dtype=float).reshape(n_cats, 1)
@@ -882,8 +889,7 @@ class ResultsAggregator:
                 "vuln_cmap",
                 [(0.0, "#3FB950"), (0.5, "#D29922"), (1.0, "#F85149")],
                 N=512,
-            )
-            vuln_cmap.set_bad("#6E7681")
+            ).with_extremes(bad="#6E7681")
 
             im = ax_heat.imshow(
                 np.ma.masked_where(no_data_matrix, heatmap_matrix),
@@ -906,15 +912,38 @@ class ResultsAggregator:
             ax_heat.set_xticks([])
 
             # Percentage labels centred in each heatmap cell
-            for i, (rate, no_data) in enumerate(zip(vuln_rates, no_data_flags)):
+            for i, cell in enumerate(cells):
+                if cell.attack_success_rate is None:
+                    ax_heat.text(
+                        0,
+                        i - 0.08,
+                        "NO DECISIVE DATA",
+                        ha="center",
+                        va="center",
+                        fontsize=10,
+                        fontweight="bold",
+                        color=TEXT_PRIMARY,
+                    )
+                    detail_text = f"0 of {cell.total} decisive"
+                else:
+                    ax_heat.text(
+                        0,
+                        i - 0.08,
+                        f"{cell.attack_success_rate:.1f}%",
+                        ha="center",
+                        va="center",
+                        fontsize=22,
+                        fontweight="bold",
+                        color=TEXT_PRIMARY,
+                    )
+                    detail_text = f"n={cell.decisive} of {cell.total}"
                 ax_heat.text(
                     0,
-                    i,
-                    "NO DATA\n(all errors)" if no_data else f"{rate:.0f}%",
+                    i + 0.2,
+                    detail_text,
                     ha="center",
                     va="center",
-                    fontsize=10 if no_data else 22,
-                    fontweight="bold",
+                    fontsize=8,
                     color=TEXT_PRIMARY,
                 )
 
@@ -931,7 +960,7 @@ class ResultsAggregator:
                 pad=0.02,
             )
             cbar.set_label(
-                "Vulnerability Rate (%)",
+                "Attack success rate on decisive results (%)",
                 color=TEXT_SECONDARY,
                 fontsize=9,
             )

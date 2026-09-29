@@ -5,6 +5,7 @@ from typing import get_args
 import pytest
 
 from llm_guard_bench.domain.models import EvaluationStatus
+from llm_guard_bench.reporting import metrics as metrics_module
 from llm_guard_bench.reporting.metrics import (
     OutcomeCounts,
     format_percent,
@@ -154,3 +155,53 @@ def test_run_health_label(
     assert label == expected
     assert "STABLE" not in label[0]
     assert (label[1] == "ok") is (completion_rate is not None and error_count == 0)
+
+
+def test_heatmap_cell_values_for_decisive_category() -> None:
+    cells = metrics_module.heatmap_cell_values({"DAN": {"VULNERABLE": 1, "PASSED": 3, "total": 4}})
+
+    assert len(cells) == 1
+    assert cells[0].category == "DAN"
+    assert cells[0].attack_success_rate == pytest.approx(25.0)
+    assert cells[0].decisive == 4
+    assert cells[0].total == 4
+
+
+@pytest.mark.parametrize(
+    "category_data",
+    [
+        {"DAN": {"AMBIGUOUS": 2, "total": 2}},
+        {"DAN": {"errors": 5, "total": 5}},
+        {"DAN": {"SKIPPED": 3, "total": 3}},
+    ],
+)
+def test_heatmap_cell_values_without_decisive_results_are_undefined(
+    category_data: dict[str, dict[str, int]],
+) -> None:
+    cell = metrics_module.heatmap_cell_values(category_data)[0]
+
+    assert cell.attack_success_rate is None
+    assert cell.decisive == 0
+
+
+def test_heatmap_cell_values_are_sorted_and_empty_category_is_undefined() -> None:
+    cells = metrics_module.heatmap_cell_values(
+        {
+            "B": {"VULNERABLE": 1, "PASSED": 1, "total": 2},
+            "A": {"total": 0},
+        }
+    )
+
+    assert [cell.category for cell in cells] == ["A", "B"]
+    assert cells[0].attack_success_rate is None
+    assert cells[0].decisive == 0
+    assert cells[0].total == 0
+    assert cells[1].attack_success_rate == pytest.approx(50.0)
+
+
+def test_heatmap_cell_values_return_unrounded_percent() -> None:
+    cell = metrics_module.heatmap_cell_values({"DAN": {"VULNERABLE": 1, "PASSED": 2, "total": 3}})[
+        0
+    ]
+
+    assert cell.attack_success_rate == pytest.approx(33.3333, abs=1e-3)

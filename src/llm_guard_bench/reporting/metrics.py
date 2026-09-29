@@ -109,6 +109,40 @@ class OutcomeCounts:
         )
 
 
+@dataclass(frozen=True)
+class HeatmapCell:
+    """Category heatmap values derived from its outcome buckets."""
+
+    category: str
+    attack_success_rate: float | None
+    decisive: int
+    total: int
+
+
+def heatmap_cell_values(category_data: Mapping[str, Mapping[str, int]]) -> list[HeatmapCell]:
+    """Build sorted per-category heatmap values from categorized result counts."""
+    cells = []
+    for category in sorted(category_data):
+        data = category_data[category]
+        counts = OutcomeCounts(
+            passed=data.get("PASSED", 0),
+            vulnerable=data.get("VULNERABLE", 0),
+            ambiguous=data.get("AMBIGUOUS", 0),
+            errors=data.get("errors", 0),
+            skipped=data.get("SKIPPED", 0),
+        )
+        rate = counts.attack_success_rate
+        cells.append(
+            HeatmapCell(
+                category=category,
+                attack_success_rate=rate * 100 if rate is not None else None,
+                decisive=counts.decisive,
+                total=data.get("total", 0),
+            )
+        )
+    return cells
+
+
 def format_percent(value: float | None, digits: int = 1) -> str:
     """Format a percentage value, displaying undefined rates as N/A."""
     if value is None:
