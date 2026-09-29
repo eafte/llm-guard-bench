@@ -3,7 +3,7 @@
 LLM Guard Bench is an adversarial attack benchmark for evaluating Large Language Model robustness against prompt injection, jailbreaks, and refusal attacks. It features concurrent attack execution, dual persistence (SQLite + JSONL), a two-stage evaluation pipeline (heuristic keyword matching followed by semantic LLM-as-a-Judge evaluation), and robust retry logic.
 
 ![Security Audit Report](llm-guard-bench/results/security_audit_report.png)
-*Preliminary finding: Prompt injection and DAN jailbreaks were the most effective vectors, while system prompt leakage and refusal-bypass attempts were fully blocked.*
+_Preliminary finding: Prompt injection and DAN jailbreaks were the most effective vectors, while system prompt leakage and refusal-bypass attempts were fully blocked._
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue)](https://www.python.org/)
@@ -392,7 +392,7 @@ GroqError: Rate limit exceeded (429)
 sqlite3.OperationalError: database is locked
 ```
 
-→ Kill stray Python processes or delete `results/guard_bench.db-wal`
+→ Only one process should write to the database at a time. Stop any other benchmark run using it and retry. Do not delete the `-wal` or `-shm` files: the WAL can hold committed results that have not been checkpointed yet. To flush it safely, close every process using the database, then run `sqlite3 results/guard_bench.db "PRAGMA wal_checkpoint(TRUNCATE);"`.
 
 **Model Timeout**
 
