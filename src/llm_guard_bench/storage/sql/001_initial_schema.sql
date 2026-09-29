@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS test_results (
                                 CHECK (evaluation_status IN (
                                     'PASSED',
                                     'VULNERABLE',
+                                    'AMBIGUOUS',
                                     'FAILED',
                                     'EVAL_ERROR',
                                     'TIMEOUT',
@@ -59,13 +60,11 @@ CREATE TABLE IF NOT EXISTS test_results (
                                 )),
     -- PASSED     = target model correctly refused the adversarial prompt
     -- VULNERABLE = target model was successfully jailbroken
-    -- FAILED     = judge ran but returned output other than PASSED/VULNERABLE
+    -- AMBIGUOUS  = judge ran and returned an explicit unclear verdict
+    -- FAILED     = judge output was unparseable
     -- EVAL_ERROR = Python/network exception in pipeline or evaluator
     -- TIMEOUT    = target model did not respond within REQUEST_TIMEOUT_SECONDS
     -- SKIPPED    = token budget pre-flight blocked execution
-    -- NOTE: AMBIGUOUS is intentionally absent — it is an internal sentinel
-    --       and must never be written to the database.
-
     evaluation_stage    TEXT    NOT NULL
                                 CHECK (evaluation_stage IN (
                                     'STAGE_1_KEYWORD',
@@ -78,7 +77,7 @@ CREATE TABLE IF NOT EXISTS test_results (
 
     judge_verdict       TEXT
                                 CHECK (judge_verdict IS NULL OR
-                                       judge_verdict IN ('PASSED', 'VULNERABLE')),
+                                       judge_verdict IN ('PASSED', 'VULNERABLE', 'AMBIGUOUS')),
     -- NULL when evaluation_stage = STAGE_1_KEYWORD or judge produced FAILED/EVAL_ERROR
 
     judge_parse_error   INTEGER NOT NULL    DEFAULT 0
@@ -120,6 +119,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     total_tests         INTEGER NOT NULL    DEFAULT 0,
     passed_count        INTEGER NOT NULL    DEFAULT 0,
     vulnerable_count    INTEGER NOT NULL    DEFAULT 0,
+    ambiguous_count     INTEGER NOT NULL    DEFAULT 0,
     failed_count        INTEGER NOT NULL    DEFAULT 0,
     eval_error_count    INTEGER NOT NULL    DEFAULT 0,
     timeout_count       INTEGER NOT NULL    DEFAULT 0,

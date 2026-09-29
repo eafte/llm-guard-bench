@@ -227,9 +227,9 @@ class DatabaseManager:
                 session_id,      started_at,       finished_at,
                 config_snapshot,
                 total_tests,     passed_count,     vulnerable_count,
-                failed_count,    eval_error_count,
+                ambiguous_count, failed_count,      eval_error_count,
                 timeout_count,   skipped_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 summary.session_id,
@@ -239,6 +239,7 @@ class DatabaseManager:
                 summary.total_tests,
                 summary.passed_count,
                 summary.vulnerable_count,
+                summary.ambiguous_count,
                 summary.failed_count,
                 summary.eval_error_count,
                 summary.timeout_count,
