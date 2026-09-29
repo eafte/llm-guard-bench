@@ -487,8 +487,8 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-async def main() -> None:
-    """Main entry point."""
+async def async_main() -> None:
+    """Run the benchmark orchestration."""
     args = parse_arguments()
     orchestrator = LLMGuardBenchOrchestrator(
         target=args.target,
@@ -500,5 +500,10 @@ async def main() -> None:
     await orchestrator.orchestrate()
 
 
+def main() -> None:
+    """Console-script entry point: run the async orchestration to completion."""
+    asyncio.run(async_main())
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
