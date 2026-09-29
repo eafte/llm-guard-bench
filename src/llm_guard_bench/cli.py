@@ -26,7 +26,7 @@ from llm_guard_bench.domain.models import AttackDefinition
 from llm_guard_bench.pipelines.pipeline import BenchmarkPipeline
 from llm_guard_bench.providers.adapters import GroqAdapter, get_adapter
 from llm_guard_bench.reporting.aggregator import ResultsAggregator
-from llm_guard_bench.settings import RESULTS_DIR
+from llm_guard_bench.settings import RESULTS_DIR, validate_configuration
 from llm_guard_bench.storage.db import DatabaseManager
 from llm_guard_bench.streaming_io.loader import AttackLoader
 
@@ -502,6 +502,12 @@ def parse_arguments() -> argparse.Namespace:
 async def async_main() -> None:
     """Run the benchmark orchestration."""
     args = parse_arguments()
+    try:
+        validate_configuration()
+    except ValueError as exc:
+        print(f"Configuration error: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+
     orchestrator = LLMGuardBenchOrchestrator(
         target=args.target,
         judge=args.judge,
