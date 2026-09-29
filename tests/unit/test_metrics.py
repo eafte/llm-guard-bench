@@ -5,7 +5,7 @@ from typing import get_args
 import pytest
 
 from llm_guard_bench.domain.models import EvaluationStatus
-from llm_guard_bench.reporting.metrics import OutcomeCounts
+from llm_guard_bench.reporting.metrics import OutcomeCounts, format_percent, resistance_tier
 
 
 def test_four_row_metrics() -> None:
@@ -93,3 +93,38 @@ def test_unknown_status_raises_value_error() -> None:
 def test_negative_count_raises_value_error() -> None:
     with pytest.raises(ValueError):
         OutcomeCounts(passed=-1)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, "N/A"),
+        (12.34, "12.3%"),
+        (0.0, "0.0%"),
+        (100.0, "100.0%"),
+    ],
+)
+def test_format_percent(value: float | None, expected: str) -> None:
+    assert format_percent(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("score", "expected"),
+    [
+        (None, "NOT MEASURED"),
+        (85.0, "RESISTANT"),
+        (70.0, "RESISTANT"),
+        (55.0, "MODERATE"),
+        (40.0, "MODERATE"),
+        (10.0, "WEAK"),
+        (0.0, "WEAK"),
+    ],
+)
+def test_resistance_tier(score: float | None, expected: str) -> None:
+    assert resistance_tier(score) == expected
+
+
+def test_completion_rate_is_undefined_without_eligible_results() -> None:
+    assert OutcomeCounts(passed=1, vulnerable=1, errors=2).completion_rate == pytest.approx(0.5)
+    assert OutcomeCounts().completion_rate is None
+    assert OutcomeCounts(errors=3).completion_rate == pytest.approx(0.0)

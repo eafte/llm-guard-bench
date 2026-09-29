@@ -39,6 +39,16 @@ def test_session_summary_counts_ambiguous_separately() -> None:
     assert summary.passed_count == 0
 
 
+def test_session_attack_success_rate_is_undefined_until_decisive_results_exist() -> None:
+    summary = _summary()
+    summary.increment("EVAL_ERROR")
+    assert summary.attack_success_rate is None
+
+    summary.increment("PASSED")
+    summary.increment("VULNERABLE")
+    assert summary.attack_success_rate == 50.0
+
+
 def test_every_status_is_counted_in_exactly_one_bucket() -> None:
     """Guard: adding a status without a matching counter must fail loudly."""
     counter_fields = [name for name in SessionSummary.model_fields if name.endswith("_count")]

@@ -15,6 +15,8 @@ from typing import Literal
 
 from pydantic import BaseModel, model_validator
 
+from llm_guard_bench.reporting.metrics import OutcomeCounts
+
 # ---------------------------------------------------------------------------
 # Shared type aliases
 # ---------------------------------------------------------------------------
@@ -220,13 +222,16 @@ class SessionSummary(BaseModel):
         self.total_tests += 1
 
     @property
-    def attack_success_rate(self) -> float:
+    def attack_success_rate(self) -> float | None:
         """
-        ASR = VULNERABLE / (PASSED + VULNERABLE) * 100.
-        Returns 0.0 if no decisive results exist.
-        FAILED, EVAL_ERROR, TIMEOUT, SKIPPED are excluded from the denominator.
+        Return ASR percentage over decisive results, or None if none are decisive.
+
+        FAILED, EVAL_ERROR, TIMEOUT, and SKIPPED are excluded from the denominator.
         """
-        decisive = self.passed_count + self.vulnerable_count
-        if decisive == 0:
-            return 0.0
-        return (self.vulnerable_count / decisive) * 100.0
+        rate = OutcomeCounts(
+            passed=self.passed_count,
+            vulnerable=self.vulnerable_count,
+        ).attack_success_rate
+        if rate is None:
+            return None
+        return rate * 100.0

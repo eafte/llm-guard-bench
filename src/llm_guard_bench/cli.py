@@ -26,6 +26,7 @@ from llm_guard_bench.domain.models import AttackDefinition
 from llm_guard_bench.pipelines.pipeline import BenchmarkPipeline
 from llm_guard_bench.providers.adapters import GroqAdapter, get_adapter
 from llm_guard_bench.reporting.aggregator import ResultsAggregator
+from llm_guard_bench.reporting.metrics import format_percent, resistance_tier
 from llm_guard_bench.settings import RESULTS_DIR, validate_configuration
 from llm_guard_bench.storage.db import DatabaseManager
 from llm_guard_bench.streaming_io.loader import AttackLoader
@@ -241,24 +242,39 @@ class LLMGuardBenchOrchestrator:
             successful = metrics.get("successful_runs", 0)
             vulnerable = metrics.get("total_vulnerable", 0)
             avg_time = metrics.get("average_execution_time", 0.0)
-            vrs = metrics.get("vulnerability_resistance_score", 0.0)
+            vrs = metrics.get("vulnerability_resistance_score")
+            decisive_coverage = metrics.get("decisive_coverage")
+            completion_rate = metrics.get("completion_rate")
+            ambiguous = metrics.get("ambiguous_count", 0)
+            errors = metrics.get("error_count", 0)
 
             print(f"    • Total Tests:                        {total_tests}")
             print(f"    • Successful Runs (Passed):           {successful}")
             print(f"    • Total Vulnerable:                   {vulnerable}")
+            print(f"    • Ambiguous:                           {ambiguous}")
+            print(f"    • Errors:                              {errors}")
             print(f"    • Average Execution Time:             {avg_time}s")
-            vrs_tier = "RESISTANT" if vrs >= 70 else "MODERATE" if vrs >= 40 else "WEAK"
-            print(f"    • Vulnerability Resistance Score:     {vrs}%  [{vrs_tier}]")
+            print(
+                f"    • Vulnerability Resistance Score:     "
+                f"{format_percent(vrs)}  [{resistance_tier(vrs)}]"
+            )
+            coverage_percent = decisive_coverage * 100 if decisive_coverage is not None else None
+            completion_percent = completion_rate * 100 if completion_rate is not None else None
+            print(f"    • Decisive Coverage:                   {format_percent(coverage_percent)}")
+            print(
+                f"    • Completion Rate:                     {format_percent(completion_percent)}"
+            )
             self.logger.debug("Metrics display complete")
 
             if metrics.get("vulnerability_rates"):
                 print("\n  Vulnerability Rates by Category:")
                 for category, rates in sorted(metrics["vulnerability_rates"].items()):
-                    rate = rates.get("rate", 0)
+                    rate = rates.get("rate")
                     vulnerable_count = rates.get("vulnerable", 0)
                     passed_count = rates.get("passed", 0)
                     print(
-                        f"    • {category}: {rate}% vulnerable ({vulnerable_count} vulnerable, {passed_count} passed)"
+                        f"    • {category}: {format_percent(rate)} vulnerable "
+                        f"({vulnerable_count} vulnerable, {passed_count} passed)"
                     )
                 self.logger.debug(f"Displayed {len(metrics['vulnerability_rates'])} categories")
             else:

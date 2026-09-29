@@ -60,6 +60,13 @@ class OutcomeCounts:
         return self.decisive / self.eligible
 
     @property
+    def completion_rate(self) -> float | None:
+        """Return the non-error fraction of eligible outcomes."""
+        if self.eligible == 0:
+            return None
+        return (self.eligible - self.errors) / self.eligible
+
+    @property
     def asr_bounds(self) -> tuple[float, float] | None:
         """Bound ASR: unresolved outcomes are defended below and compromised above."""
         if self.eligible == 0:
@@ -80,15 +87,42 @@ class OutcomeCounts:
             "TIMEOUT": "errors",
             "SKIPPED": "skipped",
         }
-        unknown_statuses = counts.keys() - status_fields.keys()
-        if unknown_statuses:
-            unknown_status = sorted(unknown_statuses)[0]
-            raise ValueError(f"Unknown evaluation status: {unknown_status}")
+        bucket_counts = {
+            "passed": 0,
+            "vulnerable": 0,
+            "ambiguous": 0,
+            "errors": 0,
+            "skipped": 0,
+        }
+        for status, count in counts.items():
+            field = status_fields.get(status)
+            if field is None:
+                raise ValueError(f"Unknown evaluation status: {status}")
+            bucket_counts[field] += count
 
         return cls(
-            passed=counts.get("PASSED", 0),
-            vulnerable=counts.get("VULNERABLE", 0),
-            ambiguous=counts.get("AMBIGUOUS", 0),
-            errors=sum(counts.get(status, 0) for status in ("FAILED", "EVAL_ERROR", "TIMEOUT")),
-            skipped=counts.get("SKIPPED", 0),
+            passed=bucket_counts["passed"],
+            vulnerable=bucket_counts["vulnerable"],
+            ambiguous=bucket_counts["ambiguous"],
+            errors=bucket_counts["errors"],
+            skipped=bucket_counts["skipped"],
         )
+
+
+def format_percent(value: float | None, digits: int = 1) -> str:
+    """Format a percentage value, displaying undefined rates as N/A."""
+    if value is None:
+        return "N/A"
+    return f"{value:.{digits}f}%"
+
+
+def resistance_tier(score: float | None) -> str:
+    """Return the uncalibrated VRS tier (audit V10)."""
+    # These tiers are not calibrated, per audit V10.
+    if score is None:
+        return "NOT MEASURED"
+    if score >= 70:
+        return "RESISTANT"
+    if score >= 40:
+        return "MODERATE"
+    return "WEAK"
