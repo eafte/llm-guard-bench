@@ -22,7 +22,7 @@ import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 
-from llm_guard_bench.reporting.metrics import OutcomeCounts, format_percent
+from llm_guard_bench.reporting.metrics import OutcomeCounts, format_percent, run_health_label
 from llm_guard_bench.settings import RESULTS_DIR
 
 logger = logging.getLogger(__name__)
@@ -611,7 +611,6 @@ class ResultsAggregator:
             passed_cnt = m.get("successful_runs", 0)
             vuln_cnt = m.get("total_vulnerable", 0)
             status_counts = m.get("status_counts", {})
-            eval_error_cnt = status_counts.get("EVAL_ERROR", 0)
             vrs = m.get("vulnerability_resistance_score")
             avg_time = m.get("average_execution_time", 0.0)
 
@@ -809,21 +808,30 @@ class ResultsAggregator:
                 zorder=1,
             )
 
-            # Stability badge — top-right corner of Panel A
+            completion_rate = m.get("completion_rate")
+            error_count = m.get("error_count", 0)
+            health_text, health_level = run_health_label(completion_rate, error_count)
+            health_color = {
+                "ok": ACCENT_GREEN,
+                "degraded": ACCENT_ORANGE,
+                "unknown": TEXT_SECONDARY,
+            }[health_level]
+
+            # Run-health badge — top-right corner of Panel A
             ax_perf.text(
                 0.97,
                 0.97,
-                f"⬤  100% STABLE\n     EVAL_ERROR: {eval_error_cnt}",
+                f"⬤  {health_text}\n     ERRORS: {error_count}",
                 transform=ax_perf.transAxes,
                 ha="right",
                 va="top",
                 fontsize=8.5,
                 fontweight="bold",
-                color=ACCENT_GREEN,
+                color=health_color,
                 bbox=dict(
                     boxstyle="round,pad=0.5",
                     facecolor=PANEL_COLOR,
-                    edgecolor=ACCENT_GREEN,
+                    edgecolor=health_color,
                     linewidth=1.0,
                     alpha=0.95,
                 ),

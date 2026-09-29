@@ -5,7 +5,12 @@ from typing import get_args
 import pytest
 
 from llm_guard_bench.domain.models import EvaluationStatus
-from llm_guard_bench.reporting.metrics import OutcomeCounts, format_percent, resistance_tier
+from llm_guard_bench.reporting.metrics import (
+    OutcomeCounts,
+    format_percent,
+    resistance_tier,
+    run_health_label,
+)
 
 
 def test_four_row_metrics() -> None:
@@ -128,3 +133,24 @@ def test_completion_rate_is_undefined_without_eligible_results() -> None:
     assert OutcomeCounts(passed=1, vulnerable=1, errors=2).completion_rate == pytest.approx(0.5)
     assert OutcomeCounts().completion_rate is None
     assert OutcomeCounts(errors=3).completion_rate == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize(
+    ("completion_rate", "error_count", "expected"),
+    [
+        (1.0, 0, ("100.0% COMPLETED", "ok")),
+        (0.5, 2, ("50.0% COMPLETED", "degraded")),
+        (0.0, 5, ("0.0% COMPLETED", "degraded")),
+        (None, 0, ("NOT MEASURED", "unknown")),
+    ],
+)
+def test_run_health_label(
+    completion_rate: float | None,
+    error_count: int,
+    expected: tuple[str, str],
+) -> None:
+    label = run_health_label(completion_rate, error_count)
+
+    assert label == expected
+    assert "STABLE" not in label[0]
+    assert (label[1] == "ok") is (completion_rate is not None and error_count == 0)

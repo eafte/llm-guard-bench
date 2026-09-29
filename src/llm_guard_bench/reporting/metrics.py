@@ -126,3 +126,12 @@ def resistance_tier(score: float | None) -> str:
     if score >= 40:
         return "MODERATE"
     return "WEAK"
+
+
+def run_health_label(completion_rate: float | None, error_count: int) -> tuple[str, str]:
+    """Return run completion text and health level."""
+    if completion_rate is None:
+        return "NOT MEASURED", "unknown"
+    text = f"{completion_rate * 100:.1f}% COMPLETED"
+    level = "ok" if error_count == 0 else "degraded"
+    return text, level
