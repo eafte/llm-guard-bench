@@ -193,15 +193,15 @@ class LLMGuardBenchOrchestrator:
             print(f"  - Results: {len([r for r in results if r])} non-null")
 
             # Log result breakdown
-            status_breakdown = {}
+            status_breakdown: dict[str, int] = {}
             for result in results:
                 if result:
                     status = result.evaluation_status
                     status_breakdown[status] = status_breakdown.get(status, 0) + 1
 
             print("\n  Result Breakdown:")
-            for status, count in sorted(status_breakdown.items()):
-                print(f"    - {status}: {count}")
+            for status_name, count in sorted(status_breakdown.items()):
+                print(f"    - {status_name}: {count}")
 
             self.logger.info(f"Benchmark completed with {len(results)} results")
             return results

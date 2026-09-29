@@ -331,7 +331,9 @@ class ResultsAggregator:
         decisive = successful_runs + total_vulnerable
         vrs = round(successful_runs / decisive * 100, 2) if decisive > 0 else 0.0
 
-        category_stats = defaultdict(lambda: {"vulnerable": 0, "passed": 0, "total": 0})
+        category_stats: defaultdict[str, dict[str, int]] = defaultdict(
+            lambda: {"vulnerable": 0, "passed": 0, "total": 0}
+        )
         execution_times: list[float] = []
 
         for result in results:
