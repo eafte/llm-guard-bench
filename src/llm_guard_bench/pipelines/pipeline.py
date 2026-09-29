@@ -66,9 +66,7 @@ class BenchmarkPipeline:
         results: list[TestResult] = []
         tasks = []
 
-        async def _bounded_execute(
-            attack: AttackDefinition, index: int
-        ) -> TestResult | None:
+        async def _bounded_execute(attack: AttackDefinition, index: int) -> TestResult | None:
             """Execute single test within semaphore bounds with defensive error handling."""
             try:
                 async with semaphore:
@@ -106,9 +104,7 @@ class BenchmarkPipeline:
             elif result is None:
                 self.logger.debug(f"Attack {idx} returned None (expected for fatal errors)")
 
-        self.logger.info(
-            f"Benchmark completed: {len(results)} results from {len(attacks)} attacks"
-        )
+        self.logger.info(f"Benchmark completed: {len(results)} results from {len(attacks)} attacks")
         return results
 
     async def _execute_single_test(
@@ -164,9 +160,7 @@ class BenchmarkPipeline:
             eval_result = EvalResult(
                 status="EVAL_ERROR",
                 stage="PRE_FLIGHT",
-                error_message=(
-                    f"Target model health check error: {type(e).__name__}: {str(e)}"
-                ),
+                error_message=(f"Target model health check error: {type(e).__name__}: {str(e)}"),
             )
 
         # ===== Stage 1: Target Model Execution =====
@@ -196,7 +190,9 @@ class BenchmarkPipeline:
                     execution_time_ms = int((target_end - target_start) * 1000)
                     if not target_output:
                         target_output = ""
-                    self.logger.debug(f"Attack {attack.attack_id}: Target model response ({execution_time_ms}ms)")
+                    self.logger.debug(
+                        f"Attack {attack.attack_id}: Target model response ({execution_time_ms}ms)"
+                    )
 
             except Exception as e:
                 execution_time_ms = int((time.time() - start_time) * 1000)
@@ -272,15 +268,11 @@ class BenchmarkPipeline:
         try:
             await self.db_manager.insert_result(test_result)
         except Exception as e:
-            self.logger.warning(
-                f"Failed to persist result for attack {attack.attack_id}: {str(e)}"
-            )
+            self.logger.warning(f"Failed to persist result for attack {attack.attack_id}: {str(e)}")
 
         return test_result
 
-    def _convert_evaluation_result(
-        self, evaluation_result: EvaluationResult
-    ) -> EvalResult:
+    def _convert_evaluation_result(self, evaluation_result: EvaluationResult) -> EvalResult:
         """
         Convert EvaluationEngine's EvaluationResult enum to EvalResult model.
 

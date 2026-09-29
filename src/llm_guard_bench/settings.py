@@ -68,8 +68,7 @@ DEFAULT_JUDGE_MODEL: Final[str] = os.getenv(
 # OLLAMA CONFIGURATION
 # ============================================================================
 DEFAULT_OLLAMA_BASE_URL: Final[str] = os.getenv(
-    "OLLAMA_BASE_URL",
-    "http://host.docker.internal:11434"
+    "OLLAMA_BASE_URL", "http://host.docker.internal:11434"
 )
 """
 Default Ollama service URL. Supports:
@@ -79,10 +78,7 @@ Default Ollama service URL. Supports:
 - Remote: https://remote-host:11434
 """
 
-OLLAMA_ENDPOINT: Final[str] = os.getenv(
-    "OLLAMA_ENDPOINT",
-    DEFAULT_OLLAMA_BASE_URL
-)
+OLLAMA_ENDPOINT: Final[str] = os.getenv("OLLAMA_ENDPOINT", DEFAULT_OLLAMA_BASE_URL)
 """
 Runtime Ollama endpoint, resolved from OLLAMA_ENDPOINT environment variable.
 Falls back to DEFAULT_OLLAMA_BASE_URL if not set.
@@ -159,6 +155,7 @@ Higher values = faster execution but higher resource usage.
 Reasonable range: 1-16 (depends on target and judge model capacity)
 """
 
+
 # ============================================================================
 # VALIDATION & STARTUP CHECKS
 # ============================================================================
@@ -182,15 +179,13 @@ def validate_configuration() -> None:
     valid_target_providers = {"ollama", "groq", "openai", "anthropic"}
     if TARGET_PROVIDER not in valid_target_providers:
         raise ValueError(
-            f"Invalid TARGET_PROVIDER '{TARGET_PROVIDER}'. "
-            f"Must be one of: {valid_target_providers}"
+            f"Invalid TARGET_PROVIDER '{TARGET_PROVIDER}'. Must be one of: {valid_target_providers}"
         )
 
     valid_judge_providers = {"ollama", "groq", "openai", "anthropic"}
     if JUDGE_PROVIDER not in valid_judge_providers:
         raise ValueError(
-            f"Invalid JUDGE_PROVIDER '{JUDGE_PROVIDER}'. "
-            f"Must be one of: {valid_judge_providers}"
+            f"Invalid JUDGE_PROVIDER '{JUDGE_PROVIDER}'. Must be one of: {valid_judge_providers}"
         )
 
     # Validate numeric settings
@@ -203,4 +198,3 @@ def validate_configuration() -> None:
 
 # Validate configuration on module import
 validate_configuration()
-

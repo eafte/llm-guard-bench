@@ -98,9 +98,7 @@ class OllamaAdapter(BaseAdapter):
 
             if attempt < len(self.CONNECTION_RETRY_DELAYS):
                 delay = self.CONNECTION_RETRY_DELAYS[attempt]
-                logging.getLogger(__name__).warning(
-                    f"Retrying Ollama health check in {delay}s"
-                )
+                logging.getLogger(__name__).warning(f"Retrying Ollama health check in {delay}s")
                 await asyncio.sleep(delay)
 
         return False
@@ -151,9 +149,7 @@ class OllamaAdapter(BaseAdapter):
         override_temperature: float = None,
     ) -> str:
         temperature = (
-            override_temperature
-            if override_temperature is not None
-            else self.default_temperature
+            override_temperature if override_temperature is not None else self.default_temperature
         )
         payload: dict[str, Any] = {
             "model": self.model_name,
@@ -194,9 +190,7 @@ class OllamaAdapter(BaseAdapter):
     ) -> str:
         """Generate response for multi-turn conversation."""
         temperature = (
-            override_temperature
-            if override_temperature is not None
-            else self.default_temperature
+            override_temperature if override_temperature is not None else self.default_temperature
         )
         payload: dict[str, Any] = {
             "model": self.model_name,
@@ -303,9 +297,7 @@ class GroqAdapter(BaseAdapter):
         override_temperature: float = None,
     ) -> str:
         temperature = (
-            override_temperature
-            if override_temperature is not None
-            else self.default_temperature
+            override_temperature if override_temperature is not None else self.default_temperature
         )
 
         completion = await self._request_completion(
@@ -345,9 +337,7 @@ class GroqAdapter(BaseAdapter):
     ) -> str:
         """Generate response for multi-turn conversation."""
         temperature = (
-            override_temperature
-            if override_temperature is not None
-            else self.default_temperature
+            override_temperature if override_temperature is not None else self.default_temperature
         )
 
         completion = await self._request_completion(messages, temperature)
@@ -377,7 +367,7 @@ class GroqAdapter(BaseAdapter):
 def _get_default_ollama_url() -> str:
     """
     Determine Ollama base URL based on environment and execution context.
-    
+
     Priority:
     1. OLLAMA_BASE_URL environment variable (explicit override)
     2. OLLAMA_ENDPOINT environment variable (Docker Compose default)

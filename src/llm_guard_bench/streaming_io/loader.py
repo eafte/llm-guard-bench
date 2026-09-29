@@ -12,9 +12,7 @@ class AttackLoader:
     """Loads and manages attack definitions from configuration files."""
 
     @staticmethod
-    def load_prompts(
-        file_path: str, categories: list[str] | None = None
-    ) -> list[AttackDefinition]:
+    def load_prompts(file_path: str, categories: list[str] | None = None) -> list[AttackDefinition]:
         """
         Load and parse attack definitions from a JSON file with optional category filtering.
 

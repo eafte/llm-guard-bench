@@ -32,8 +32,8 @@ from llm_guard_bench.streaming_io.loader import AttackLoader
 # Standard production logger configuration
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 
 
@@ -67,7 +67,7 @@ class LLMGuardBenchOrchestrator:
         return f"SESS_{timestamp}"
 
     def _log_section(self, title: str) -> None:
-        print(f"\n{'='*80}\n  {title}\n{'='*80}\n")
+        print(f"\n{'=' * 80}\n  {title}\n{'=' * 80}\n")
 
     async def run_auto_flush(self) -> None:
         """Restart the Ollama Docker container to clear KV-cache (--auto-flush)."""
@@ -131,8 +131,7 @@ class LLMGuardBenchOrchestrator:
 
         # Load attacks using the AttackLoader
         attacks = AttackLoader.load_prompts(
-            str(prompts_path),
-            self.categories if self.categories else None
+            str(prompts_path), self.categories if self.categories else None
         )
         print(f"✓ Loaded {len(attacks)} attack definitions successfully.")
         return attacks
@@ -144,10 +143,7 @@ class LLMGuardBenchOrchestrator:
         print(f"  Judge Model:  {self.judge}")
 
         # Initialize target adapter
-        self.target_adapter = get_adapter(
-            os.getenv("TARGET_PROVIDER", "ollama"),
-            self.target
-        )
+        self.target_adapter = get_adapter(os.getenv("TARGET_PROVIDER", "ollama"), self.target)
 
         # Initialize judge adapter with API key
         judge_provider = os.getenv("JUDGE_PROVIDER", "groq").strip().lower()
@@ -227,32 +223,30 @@ class LLMGuardBenchOrchestrator:
                 print("✗ Critical: Database manager not available")
                 return
 
-            self.logger.debug(f"Creating ResultsAggregator with db_manager: {type(self.db_manager)}")
+            self.logger.debug(
+                f"Creating ResultsAggregator with db_manager: {type(self.db_manager)}"
+            )
             self.results_aggregator = ResultsAggregator(self.db_manager)
 
             self.logger.debug("Generating metrics summary...")
-            metrics = await self.results_aggregator.generate_metrics_summary(
-                self.session_id
+            metrics = await self.results_aggregator.generate_metrics_summary(self.session_id)
+            self.logger.info(
+                f"Metrics generated: total_runs={metrics.get('total_runs')}, vulnerable={metrics.get('total_vulnerable')}"
             )
-            self.logger.info(f"Metrics generated: total_runs={metrics.get('total_runs')}, vulnerable={metrics.get('total_vulnerable')}")
 
             # Display metrics with defensive formatting
             print("\n  Security Evaluation Metrics:")
-            total_tests = metrics.get('total_runs', 0)
-            successful  = metrics.get('successful_runs', 0)
-            vulnerable  = metrics.get('total_vulnerable', 0)
-            avg_time    = metrics.get('average_execution_time', 0.0)
-            vrs         = metrics.get('vulnerability_resistance_score', 0.0)
+            total_tests = metrics.get("total_runs", 0)
+            successful = metrics.get("successful_runs", 0)
+            vulnerable = metrics.get("total_vulnerable", 0)
+            avg_time = metrics.get("average_execution_time", 0.0)
+            vrs = metrics.get("vulnerability_resistance_score", 0.0)
 
             print(f"    • Total Tests:                        {total_tests}")
             print(f"    • Successful Runs (Passed):           {successful}")
             print(f"    • Total Vulnerable:                   {vulnerable}")
             print(f"    • Average Execution Time:             {avg_time}s")
-            vrs_tier = (
-                "RESISTANT" if vrs >= 70
-                else "MODERATE" if vrs >= 40
-                else "WEAK"
-            )
+            vrs_tier = "RESISTANT" if vrs >= 70 else "MODERATE" if vrs >= 40 else "WEAK"
             print(f"    • Vulnerability Resistance Score:     {vrs}%  [{vrs_tier}]")
             self.logger.debug("Metrics display complete")
 
@@ -285,24 +279,33 @@ class LLMGuardBenchOrchestrator:
                     self.results_aggregator.plot_vulnerability_chart(
                         self.session_id, chart_path, metrics=metrics
                     ),
-                    timeout=180.0
+                    timeout=180.0,
                 )
 
                 chart_exists = Path(chart_path).exists()
                 if chart_success and chart_exists:
                     chart_size = Path(chart_path).stat().st_size
                     print(f"\n✓ Analytical charts generated and saved to: {chart_path}")
-                    self.logger.info(f"Chart successfully created at {chart_path} ({chart_size} bytes)")
+                    self.logger.info(
+                        f"Chart successfully created at {chart_path} ({chart_size} bytes)"
+                    )
                 else:
-                    print(f"\n⚠ Chart generation incomplete: success={chart_success}, exists={chart_exists}")
-                    self.logger.warning(f"Chart generation returned success={chart_success}, file exists={chart_exists}")
+                    print(
+                        f"\n⚠ Chart generation incomplete: success={chart_success}, exists={chart_exists}"
+                    )
+                    self.logger.warning(
+                        f"Chart generation returned success={chart_success}, file exists={chart_exists}"
+                    )
 
             except TimeoutError:
                 self.logger.error("Chart generation timed out after 60 seconds")
                 print("\n⚠ Chart generation timed out (60s limit)")
                 print("  Results data saved, but chart generation was cancelled")
             except Exception as chart_err:
-                self.logger.error(f"Chart generation error: {type(chart_err).__name__}: {str(chart_err)}", exc_info=True)
+                self.logger.error(
+                    f"Chart generation error: {type(chart_err).__name__}: {str(chart_err)}",
+                    exc_info=True,
+                )
                 print(f"\n⚠ Chart generation encountered an error: {type(chart_err).__name__}")
                 print(f"  Error: {str(chart_err)[:100]}")
                 print("  Continuing - metrics have been computed successfully")
@@ -310,7 +313,9 @@ class LLMGuardBenchOrchestrator:
             self.logger.info("Aggregation phase completed successfully")
 
         except Exception as e:
-            self.logger.error(f"Aggregation phase error: {type(e).__name__}: {str(e)}", exc_info=True)
+            self.logger.error(
+                f"Aggregation phase error: {type(e).__name__}: {str(e)}", exc_info=True
+            )
             print(f"\n✗ Aggregation phase failed: {type(e).__name__}")
             print(f"  {str(e)[:150]}")
             print("  Note: Benchmark data has been saved to database and JSON files")
@@ -333,9 +338,9 @@ class LLMGuardBenchOrchestrator:
         """Main orchestration method with comprehensive logging and error recovery."""
         exit_code = 0
         try:
-            self.logger.info("="*80)
+            self.logger.info("=" * 80)
             self.logger.info(f"Starting orchestration session: {self.session_id}")
-            self.logger.info("="*80)
+            self.logger.info("=" * 80)
 
             # Stage 1: Environment
             try:
@@ -408,7 +413,9 @@ class LLMGuardBenchOrchestrator:
             # Stage 6: Aggregation (CRITICAL - keep database open)
             try:
                 self.logger.debug("Stage 6: Aggregating results...")
-                self.logger.info(f"Database manager state before aggregation: {type(self.db_manager)}")
+                self.logger.info(
+                    f"Database manager state before aggregation: {type(self.db_manager)}"
+                )
                 await self.aggregate_and_export_results()
                 self.logger.info("✓ Stage 6 Complete: Results aggregated and exported")
             except Exception as e:
@@ -421,11 +428,13 @@ class LLMGuardBenchOrchestrator:
             self._log_section("Benchmark Execution Complete")
             print(f"✓ Session {self.session_id} finalized successfully.\n")
             self.logger.info(f"Session {self.session_id} completed with exit_code={exit_code}")
-            self.logger.info("="*80)
+            self.logger.info("=" * 80)
 
         except Exception as e:
             # This should never happen due to individual stage try-except blocks
-            self.logger.critical(f"UNEXPECTED ERROR in orchestrate(): {type(e).__name__}: {str(e)}", exc_info=True)
+            self.logger.critical(
+                f"UNEXPECTED ERROR in orchestrate(): {type(e).__name__}: {str(e)}", exc_info=True
+            )
             print(f"\n✗ FATAL: Unexpected pipeline error: {str(e)}")
             exit_code = 1
 
@@ -436,7 +445,10 @@ class LLMGuardBenchOrchestrator:
                 await self.cleanup()
                 self.logger.info("Cleanup completed successfully")
             except Exception as cleanup_err:
-                self.logger.error(f"Cleanup error (ignored): {type(cleanup_err).__name__}: {str(cleanup_err)}", exc_info=True)
+                self.logger.error(
+                    f"Cleanup error (ignored): {type(cleanup_err).__name__}: {str(cleanup_err)}",
+                    exc_info=True,
+                )
                 print("\n⚠ Note: Cleanup encountered a non-fatal error")
 
             if exit_code != 0:
@@ -453,7 +465,7 @@ def parse_arguments() -> argparse.Namespace:
         "--target",
         type=str,
         required=True,
-        help="Target LLM model name (e.g., 'llama3:8b', 'gpt-4')"
+        help="Target LLM model name (e.g., 'llama3:8b', 'gpt-4')",
     )
     parser.add_argument(
         "--judge",

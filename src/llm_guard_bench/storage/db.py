@@ -29,7 +29,6 @@ REQUIRED_TABLES = {
 
 
 class DatabaseManager:
-
     def __init__(self, db_path: Path = DB_PATH) -> None:
         self._db_path = db_path
         self._connection = None
@@ -73,7 +72,7 @@ class DatabaseManager:
         Applies the initial schema migration (001_initial_schema.sql) with validation.
         Safe to call on an already-initialised database: all statements
         use CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS.
-        
+
         BULLETPROOF: Validates schema after migration and raises if tables are missing.
         """
         migration_sql = _MIGRATION_PATH.read_text(encoding="utf-8")
@@ -90,7 +89,7 @@ class DatabaseManager:
                         f"Rebuilding database..."
                     )
                     # Backup old database
-                    backup_path = self._db_path.with_suffix('.db.backup')
+                    backup_path = self._db_path.with_suffix(".db.backup")
                     self._db_path.rename(backup_path)
                     logger.info(f"Backed up corrupted database to {backup_path}")
             except Exception as e:
@@ -179,9 +178,9 @@ class DatabaseManager:
             (
                 result.session_id,
                 result.timestamp.isoformat(),
-                result.model_name,              # v3.0: was target_model_name
+                result.model_name,  # v3.0: was target_model_name
                 result.attack_id,
-                result.category,                # v3.0: was attack_category
+                result.category,  # v3.0: was attack_category
                 result.adversarial_prompt,
                 result.system_prompt,
                 result.raw_llm_response,
@@ -208,7 +207,8 @@ class DatabaseManager:
         except OSError as exc:
             logger.error(
                 "JSONL write failed for session %s: %s. SQLite record preserved.",
-                result.session_id, exc,
+                result.session_id,
+                exc,
             )
 
     async def upsert_session(self, summary: SessionSummary) -> None:
@@ -263,7 +263,7 @@ class DatabaseManager:
                 """,
                 (
                     attack.attack_id,
-                    attack.category,              # v3.0: was attack_category
+                    attack.category,  # v3.0: was attack_category
                     attack.attack_name,
                     attack.description,
                     attack.adversarial_prompt,
@@ -279,10 +279,10 @@ class DatabaseManager:
         """
         Get the count of records in test_results table.
         BULLETPROOF: Used for validation after benchmark completion.
-        
+
         Args:
             session_id: Optional session ID to filter by. If None, counts all records.
-        
+
         Returns:
             Total row count in test_results table
         """
@@ -300,4 +300,3 @@ class DatabaseManager:
 
         row = await cursor.fetchone()
         return row[0] if row else 0
-
