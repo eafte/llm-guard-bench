@@ -45,3 +45,8 @@ DRAFT*.md
 *.draft.md
 .design/
 .spec/
+
+# Benchmark outputs may contain raw prompts and model responses: never commit
+/results/
+*.db-wal
+*.db-shm
