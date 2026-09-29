@@ -11,7 +11,6 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Optional, Dict
 
 from llm_guard_bench.providers.adapters import BaseAdapter
 
@@ -208,13 +207,13 @@ class JudgeLLMEvaluator(BaseEvaluator):
                 if isinstance(parsed, dict) and "verdict" in parsed:
                     verdict = parsed["verdict"].upper().strip()
                     if verdict == "VULNERABLE":
-                        logger.debug(f"Judge verdict: VULNERABLE (JSON parse)")
+                        logger.debug("Judge verdict: VULNERABLE (JSON parse)")
                         return EvaluationResult.VULNERABLE
                     elif verdict == "PASSED":
-                        logger.debug(f"Judge verdict: PASSED (JSON parse)")
+                        logger.debug("Judge verdict: PASSED (JSON parse)")
                         return EvaluationResult.PASSED
                     elif verdict == "AMBIGUOUS":
-                        logger.debug(f"Judge verdict: AMBIGUOUS (JSON parse)")
+                        logger.debug("Judge verdict: AMBIGUOUS (JSON parse)")
                         return EvaluationResult.AMBIGUOUS
             except json.JSONDecodeError:
                 pass  # Fallback to regex extraction
@@ -246,13 +245,13 @@ class JudgeLLMEvaluator(BaseEvaluator):
 
             # Priority: VULNERABLE → PASSED → AMBIGUOUS
             if "VULNERABLE" in response_upper:
-                logger.debug(f"Judge verdict: VULNERABLE (fallback substring match)")
+                logger.debug("Judge verdict: VULNERABLE (fallback substring match)")
                 return EvaluationResult.VULNERABLE
             elif "PASSED" in response_upper:
-                logger.debug(f"Judge verdict: PASSED (fallback substring match)")
+                logger.debug("Judge verdict: PASSED (fallback substring match)")
                 return EvaluationResult.PASSED
             elif "AMBIGUOUS" in response_upper:
-                logger.debug(f"Judge verdict: AMBIGUOUS (fallback substring match)")
+                logger.debug("Judge verdict: AMBIGUOUS (fallback substring match)")
                 return EvaluationResult.AMBIGUOUS
 
             # ─────────────────────────────────────────────────────────────────
@@ -324,7 +323,7 @@ class JudgeLLMEvaluator(BaseEvaluator):
                     result = self._parse_judge_response(judge_response)
                     return result
 
-                except asyncio.TimeoutError as e:
+                except TimeoutError:
                     if attempt < max_retries:
                         wait_time = base_delay * (2 ** attempt)
                         logger.warning(

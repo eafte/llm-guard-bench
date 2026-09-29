@@ -10,12 +10,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Literal, Optional
-from pydantic import BaseModel, Field
-from typing import List, Literal
-from pydantic import BaseModel, model_validator
+from datetime import UTC, datetime
+from typing import Literal
 
+from pydantic import BaseModel, model_validator
 
 # ---------------------------------------------------------------------------
 # Shared type aliases
@@ -57,9 +55,9 @@ class AttackDefinition(BaseModel):
     category: str
     # Support both uppercase and lowercase severity values
     severity: Literal['LOW', 'MEDIUM', 'HIGH', 'CRITICAL', 'low', 'medium', 'high', 'critical']
-    tags: List[str]
-    turns: List[str]  # Sequential conversation turns for multi-turn attack evaluation
-    system_prompt: Optional[str] = None  # Optional system prompt for context
+    tags: list[str]
+    turns: list[str]  # Sequential conversation turns for multi-turn attack evaluation
+    system_prompt: str | None = None  # Optional system prompt for context
 
     @property
     def adversarial_prompt(self) -> str:
@@ -97,12 +95,12 @@ class AttackDefinition(BaseModel):
 class EvalResult(BaseModel, frozen=True):
     status:            EvaluationStatus
     stage:             EvaluationStage
-    judge_verdict:     Optional[Literal["PASSED", "VULNERABLE"]] = None
+    judge_verdict:     Literal["PASSED", "VULNERABLE"] | None = None
     judge_parse_error: bool                                       = False
-    error_message:     Optional[str]                             = None
+    error_message:     str | None                             = None
 
     @model_validator(mode="after")
-    def _validate_consistency(self) -> "EvalResult":
+    def _validate_consistency(self) -> EvalResult:
         if self.stage == "STAGE_1_KEYWORD" and self.judge_verdict is not None:
             raise ValueError(
                 "judge_verdict must be None when stage is STAGE_1_KEYWORD"
@@ -125,20 +123,20 @@ class TestResult(BaseModel, frozen=True):
     attack_id:         str
     category:          AttackCategoryType  # v3.0: was attack_category
     adversarial_prompt: str
-    system_prompt:     Optional[str]
+    system_prompt:     str | None
     raw_llm_response:  str            = ""
     # Empty string (never None) when no response could be obtained.
 
     evaluation_status:  EvaluationStatus
     evaluation_stage:   EvaluationStage
-    judge_verdict:      Optional[Literal["PASSED", "VULNERABLE"]] = None
+    judge_verdict:      Literal["PASSED", "VULNERABLE"] | None = None
     judge_parse_error:  bool          = False
     execution_time_ms:  int           = 0
     total_time_ms:      int           = 0
-    prompt_tokens:      Optional[int] = None
-    completion_tokens:  Optional[int] = None
-    http_status_code:   Optional[int] = None
-    error_message:      Optional[str] = None
+    prompt_tokens:      int | None = None
+    completion_tokens:  int | None = None
+    http_status_code:   int | None = None
+    error_message:      str | None = None
 
     @classmethod
     def from_attack_and_eval(
@@ -151,18 +149,18 @@ class TestResult(BaseModel, frozen=True):
         eval_result:       EvalResult,
         execution_time_ms: int,
         total_time_ms:     int,
-        prompt_tokens:     Optional[int] = None,
-        completion_tokens: Optional[int] = None,
-        http_status_code:  Optional[int] = None,
-        adapter_error:     Optional[str] = None,
-    ) -> "TestResult":
+        prompt_tokens:     int | None = None,
+        completion_tokens: int | None = None,
+        http_status_code:  int | None = None,
+        adapter_error:     str | None = None,
+    ) -> TestResult:
         """
         Factory method. The only sanctioned way to create a TestResult in pipeline.py.
         Merges attack metadata, adapter response data, and eval verdict into one record.
         """
         return cls(
             session_id         = session_id,
-            timestamp          = datetime.now(timezone.utc),
+            timestamp          = datetime.now(UTC),
             model_name         = model_name,
             attack_id          = attack.attack_id,
             category           = attack.category,
@@ -189,7 +187,7 @@ class SessionSummary(BaseModel):
     # Not frozen: increment() mutates counters in place.
     session_id:       str
     started_at:       datetime
-    finished_at:      Optional[datetime] = None
+    finished_at:      datetime | None = None
     config_snapshot:  dict
     total_tests:      int = 0
     passed_count:     int = 0

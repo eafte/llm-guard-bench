@@ -11,8 +11,8 @@ from pathlib import Path
 
 import aiosqlite
 
-from llm_guard_bench.settings import DB_PATH, RESULTS_DIR
 from llm_guard_bench.domain.models import AttackDefinition, SessionSummary, TestResult
+from llm_guard_bench.settings import DB_PATH, RESULTS_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +77,7 @@ class DatabaseManager:
         BULLETPROOF: Validates schema after migration and raises if tables are missing.
         """
         migration_sql = _MIGRATION_PATH.read_text(encoding="utf-8")
-        
+
         # Remove old corrupted database if schema is invalid
         if self._db_path.exists():
             try:
@@ -95,13 +95,13 @@ class DatabaseManager:
                     logger.info(f"Backed up corrupted database to {backup_path}")
             except Exception as e:
                 logger.debug(f"Schema pre-check failed (expected if DB is new): {e}")
-        
+
         # Apply migrations
         async with aiosqlite.connect(self._db_path) as conn:
             await conn.executescript(migration_sql)
             await conn.commit()
         logger.info("Database initialised at %s", self._db_path)
-        
+
         # Validate schema after migration
         await self._validate_schema()
 
@@ -128,7 +128,7 @@ class DatabaseManager:
         """
         existing_tables = await self._get_table_names()
         missing_tables = REQUIRED_TABLES - existing_tables
-        
+
         if missing_tables:
             msg = (
                 f"DATABASE SCHEMA MISMATCH DETECTED!\n"
@@ -140,7 +140,7 @@ class DatabaseManager:
             )
             logger.error(msg)
             raise RuntimeError(msg)
-        
+
         logger.debug(f"Schema validation passed. Tables: {existing_tables}")
         self._schema_validated = True
 
@@ -156,7 +156,7 @@ class DatabaseManager:
         """
         if self._connection is None:
             raise RuntimeError("Database connection not established. Call connect() first.")
-        
+
         conn = self._connection
         await conn.execute(
             """
@@ -219,7 +219,7 @@ class DatabaseManager:
         """
         if self._connection is None:
             raise RuntimeError("Database connection not established. Call connect() first.")
-        
+
         conn = self._connection
         await conn.execute(
             """
@@ -288,7 +288,7 @@ class DatabaseManager:
         """
         if self._connection is None:
             raise RuntimeError("Database connection not established. Call connect() first.")
-        
+
         conn = self._connection
         if session_id:
             cursor = await conn.execute(
@@ -297,7 +297,7 @@ class DatabaseManager:
             )
         else:
             cursor = await conn.execute("SELECT COUNT(*) FROM test_results")
-        
+
         row = await cursor.fetchone()
         return row[0] if row else 0
 

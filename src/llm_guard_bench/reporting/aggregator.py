@@ -10,16 +10,16 @@ import asyncio
 import json
 import logging
 import sqlite3
+from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Union
-from collections import Counter, defaultdict
 
-import numpy as np
 import matplotlib
+import numpy as np
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ class ResultsAggregator:
     dual-panel security-audit infographic.
     """
 
-    def __init__(self, db_manager_or_path: Union[str, Path, object]):
+    def __init__(self, db_manager_or_path: str | Path | object):
         """
         Initialize the ResultsAggregator.
 
@@ -144,7 +144,7 @@ class ResultsAggregator:
         self,
         session_id: str,
         output_path: str = "results/security_audit_report.png",
-        metrics: Optional[dict] = None,
+        metrics: dict | None = None,
     ) -> bool:
         """
         Generate a high-fidelity dual-panel security audit infographic.
@@ -214,7 +214,7 @@ class ResultsAggregator:
     #  Database / JSON helpers
     # ──────────────────────────────────────────────────────────────────────────
 
-    async def _query_results_by_session(self, session_id: str) -> List[Dict]:
+    async def _query_results_by_session(self, session_id: str) -> list[dict]:
         """Query results from DB for session_id with timeout protection."""
         try:
             if not self.db_path or not self.db_path.exists():
@@ -226,7 +226,7 @@ class ResultsAggregator:
                     self._query_sqlite(session_id), timeout=180.0
                 )
                 return results or []
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.error(
                     f"DB query timed out after 180 s for session {session_id}"
                 )
@@ -236,7 +236,7 @@ class ResultsAggregator:
             logger.error(f"DB query error ({type(e).__name__}): {str(e)}")
             return []
 
-    async def _query_sqlite(self, session_id: str) -> List[Dict]:
+    async def _query_sqlite(self, session_id: str) -> list[dict]:
         """Async wrapper: runs synchronous SQLite query in a thread executor."""
         try:
             loop = asyncio.get_event_loop()
@@ -248,7 +248,7 @@ class ResultsAggregator:
             logger.error(f"Async SQLite query failed: {str(e)}")
             return []
 
-    def _sync_query_sqlite(self, session_id: str) -> List[Dict]:
+    def _sync_query_sqlite(self, session_id: str) -> list[dict]:
         """Synchronous SQLite query (runs in executor thread)."""
         try:
             conn = sqlite3.connect(str(self.db_path))
@@ -285,7 +285,7 @@ class ResultsAggregator:
             logger.error(f"SQLite query error: {str(e)}")
             return []
 
-    def _load_results_from_json(self, session_id: str) -> List[Dict]:
+    def _load_results_from_json(self, session_id: str) -> list[dict]:
         """Load results from JSONL file in results/ directory as fallback."""
         try:
             jsonl_file = Path("results") / f"session_{session_id}.jsonl"
@@ -294,7 +294,7 @@ class ResultsAggregator:
                 return []
 
             results = []
-            with open(jsonl_file, "r", encoding="utf-8") as f:
+            with open(jsonl_file, encoding="utf-8") as f:
                 for line_num, line in enumerate(f, 1):
                     try:
                         if line.strip():
@@ -315,7 +315,7 @@ class ResultsAggregator:
     #  Metrics computation
     # ──────────────────────────────────────────────────────────────────────────
 
-    def _compute_metrics(self, results: List[Dict], session_id: str) -> Dict:
+    def _compute_metrics(self, results: list[dict], session_id: str) -> dict:
         """
         Compute all benchmark metrics from a list of result records.
 
@@ -353,7 +353,7 @@ class ResultsAggregator:
         vrs = round(successful_runs / decisive * 100, 2) if decisive > 0 else 0.0
 
         category_stats = defaultdict(lambda: {"vulnerable": 0, "passed": 0, "total": 0})
-        execution_times: List[float] = []
+        execution_times: list[float] = []
 
         for result in results:
             category = result.get("category", "unknown")
@@ -369,7 +369,7 @@ class ResultsAggregator:
             if isinstance(exec_ms, (int, float)) and exec_ms > 0:
                 execution_times.append(exec_ms / 1000.0)
 
-        vulnerability_rates: Dict[str, dict] = {}
+        vulnerability_rates: dict[str, dict] = {}
         for category, stats in category_stats.items():
             if stats["total"] > 0:
                 vulnerability_rates[category] = {
@@ -396,7 +396,7 @@ class ResultsAggregator:
             "categories": list(vulnerability_rates.keys()),
         }
 
-    def _count_statuses(self, results: List[Dict]) -> Dict[str, int]:
+    def _count_statuses(self, results: list[dict]) -> dict[str, int]:
         """Count every evaluation status and validate the total count."""
         raw_counts = Counter(
             str(result.get("evaluation_status") or "UNKNOWN")
@@ -423,10 +423,10 @@ class ResultsAggregator:
         return status_counts
 
     def _aggregate_by_category(
-        self, results: List[Dict]
-    ) -> Dict[str, Dict[str, int]]:
+        self, results: list[dict]
+    ) -> dict[str, dict[str, int]]:
         """Aggregate all configured categories, including error-only categories."""
-        category_data: Dict[str, Dict[str, int]] = {
+        category_data: dict[str, dict[str, int]] = {
             category: {
                 "VULNERABLE": 0,
                 "PASSED": 0,
@@ -455,11 +455,11 @@ class ResultsAggregator:
 
         return dict(category_data)
 
-    def _load_configured_categories(self) -> List[str]:
+    def _load_configured_categories(self) -> list[str]:
         """Load every attack category declared in config/prompts.json."""
         config_path = Path(__file__).resolve().parent.parent / "config" / "prompts.json"
         try:
-            with open(config_path, "r", encoding="utf-8") as config_file:
+            with open(config_path, encoding="utf-8") as config_file:
                 config = json.load(config_file)
 
             return sorted(
@@ -476,15 +476,15 @@ class ResultsAggregator:
             return []
 
     def _extract_performance_data(
-        self, results: List[Dict]
-    ) -> List[tuple[str, float]]:
+        self, results: list[dict]
+    ) -> list[tuple[str, float]]:
         """
         Average execution time across all valid attacks for each model.
 
         Returns:
             List of (model_name, average_execution_time_ms) pairs.
         """
-        timings_by_model: Dict[str, List[float]] = defaultdict(list)
+        timings_by_model: dict[str, list[float]] = defaultdict(list)
 
         for result in results:
             model_name = result.get("model_name")
@@ -508,10 +508,10 @@ class ResultsAggregator:
 
     async def _generate_chart_async(
         self,
-        category_data: Dict[str, Dict[str, int]],
+        category_data: dict[str, dict[str, int]],
         output_path: str,
-        metrics: Optional[dict] = None,
-        performance_data: Optional[List[tuple[str, float]]] = None,
+        metrics: dict | None = None,
+        performance_data: list[tuple[str, float]] | None = None,
     ) -> bool:
         """Run the blocking chart-creation function inside a thread executor."""
         try:
@@ -530,10 +530,10 @@ class ResultsAggregator:
 
     def _create_vulnerability_chart(
         self,
-        category_data: Dict[str, Dict[str, int]],
+        category_data: dict[str, dict[str, int]],
         output_path: str,
-        metrics: Optional[dict] = None,
-        performance_data: Optional[List[tuple[str, float]]] = None,
+        metrics: dict | None = None,
+        performance_data: list[tuple[str, float]] | None = None,
     ) -> bool:
         """
         Render a high-fidelity dual-panel security-audit infographic and save

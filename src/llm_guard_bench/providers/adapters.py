@@ -19,13 +19,13 @@ Each adapter:
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import pathlib
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Any
 
 import aiohttp
-import logging
 from groq import AsyncGroq
 
 
@@ -90,7 +90,7 @@ class OllamaAdapter(BaseAdapter):
                         logging.getLogger(__name__).warning(
                             f"Ollama health check returned HTTP {response.status}"
                         )
-            except (aiohttp.ClientConnectionError, asyncio.TimeoutError) as exc:
+            except (TimeoutError, aiohttp.ClientConnectionError) as exc:
                 logging.getLogger(__name__).warning(
                     f"Ollama health check failed on attempt {attempt + 1}/"
                     f"{len(self.CONNECTION_RETRY_DELAYS) + 1}: {exc}"
@@ -120,7 +120,7 @@ class OllamaAdapter(BaseAdapter):
                                 f"Ollama API error (status={response.status}): {body}"
                             )
                         return await response.json(content_type=None)
-            except asyncio.TimeoutError as exc:
+            except TimeoutError as exc:
                 raise RuntimeError(
                     f"Ollama request timed out after {self.timeout_seconds} seconds"
                 ) from exc
@@ -289,7 +289,7 @@ class GroqAdapter(BaseAdapter):
                 messages=messages,
                 temperature=temperature,
             )
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             raise RuntimeError(
                 f"Groq network failure: request timed out after {self.timeout_seconds} seconds"
             ) from exc
@@ -387,15 +387,15 @@ def _get_default_ollama_url() -> str:
     # Priority 1: Explicit environment variable
     if env_url := os.getenv("OLLAMA_BASE_URL"):
         return env_url
-    
+
     # Priority 2: Docker Compose OLLAMA_ENDPOINT
     if env_url := os.getenv("OLLAMA_ENDPOINT"):
         return env_url
-    
+
     # Priority 3: Running in Docker container (check for /.dockerenv marker)
     if pathlib.Path("/.dockerenv").exists():
         return "http://host.docker.internal:11434"
-    
+
     # Fallback: localhost (for local development)
     return "http://localhost:11434"
 

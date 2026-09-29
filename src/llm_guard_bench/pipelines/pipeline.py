@@ -9,11 +9,10 @@ persists results to both SQLite and JSONL.
 import asyncio
 import logging
 import time
-from typing import List, Optional
 
-from llm_guard_bench.providers.adapters import BaseAdapter
+from llm_guard_bench.domain.models import AttackDefinition, EvalResult, TestResult
 from llm_guard_bench.evaluators.evaluator import EvaluationEngine, EvaluationResult
-from llm_guard_bench.domain.models import AttackDefinition, EvalResult, EvaluationStatus, TestResult
+from llm_guard_bench.providers.adapters import BaseAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +45,11 @@ class BenchmarkPipeline:
 
     async def run_benchmark(
         self,
-        attacks: List[AttackDefinition],
+        attacks: list[AttackDefinition],
         model_name: str,
         concurrency_limit: int,
         session_id: str,
-    ) -> List[TestResult]:
+    ) -> list[TestResult]:
         """
         Execute benchmark across multiple attack vectors with concurrency control.
 
@@ -64,12 +63,12 @@ class BenchmarkPipeline:
             List of TestResult objects containing execution and evaluation metrics
         """
         semaphore = asyncio.Semaphore(concurrency_limit)
-        results: List[TestResult] = []
+        results: list[TestResult] = []
         tasks = []
 
         async def _bounded_execute(
             attack: AttackDefinition, index: int
-        ) -> Optional[TestResult]:
+        ) -> TestResult | None:
             """Execute single test within semaphore bounds with defensive error handling."""
             try:
                 async with semaphore:
@@ -119,7 +118,7 @@ class BenchmarkPipeline:
         attack_index: int,
         session_id: str,
         timeout_seconds: float = 180.0,
-    ) -> Optional[TestResult]:
+    ) -> TestResult | None:
         """
         Execute a single benchmark test with full instrumentation and error handling.
 
@@ -140,7 +139,7 @@ class BenchmarkPipeline:
         target_output = ""
         execution_time_ms = 0
         total_time_ms = 0
-        eval_result: Optional[EvalResult] = None
+        eval_result: EvalResult | None = None
 
         # ===== Pre-flight: Target Provider Health Check =====
         health_start = time.time()
@@ -181,7 +180,7 @@ class BenchmarkPipeline:
                         self.target_adapter.generate_multi_turn(messages=messages),
                         timeout=180.0,
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     execution_time_ms = int((time.time() - target_start) * 1000)
                     self.logger.warning(
                         f"Attack {attack.attack_id}: Target model timeout after {180.0}s"
@@ -215,7 +214,7 @@ class BenchmarkPipeline:
             try:
                 # Defensive pacing: Wait 1.0s before Stage 2 to respect Groq free tier RPM limits
                 await asyncio.sleep(1.0)
-                
+
                 eval_start = time.time()
                 try:
                     evaluation_result: EvaluationResult = await asyncio.wait_for(
@@ -228,7 +227,7 @@ class BenchmarkPipeline:
                     )
                     eval_result = self._convert_evaluation_result(evaluation_result)
 
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     self.logger.warning(
                         f"Attack {attack.attack_id}: Evaluation timeout after {180.0}s"
                     )
