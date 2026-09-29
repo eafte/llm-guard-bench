@@ -41,3 +41,19 @@ llm_guard_bench = ["resources/*.json", "storage/sql/*.sql"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes: unused imports, undefined names
+    "I",      # import sorting
+    "B",      # flake8-bugbear: likely bugs
+    "UP",     # pyupgrade: modern Python syntax
+    "ASYNC",  # async pitfalls such as blocking calls in coroutines
+]
