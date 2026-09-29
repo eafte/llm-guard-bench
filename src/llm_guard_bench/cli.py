@@ -26,6 +26,7 @@ from llm_guard_bench.domain.models import AttackDefinition
 from llm_guard_bench.pipelines.pipeline import BenchmarkPipeline
 from llm_guard_bench.providers.adapters import GroqAdapter, get_adapter
 from llm_guard_bench.reporting.aggregator import ResultsAggregator
+from llm_guard_bench.settings import RESULTS_DIR
 from llm_guard_bench.storage.db import DatabaseManager
 from llm_guard_bench.streaming_io.loader import AttackLoader
 
@@ -265,12 +266,12 @@ class LLMGuardBenchOrchestrator:
                 self.logger.debug("No vulnerability rates to display")
 
             # Ensure results directory exists
-            results_dir = Path("results")
+            results_dir = RESULTS_DIR
             results_dir.mkdir(parents=True, exist_ok=True)
             self.logger.debug(f"Results directory ready: {results_dir.resolve()}")
 
             # Generate dual-panel infographic with explicit error handling and timeout
-            chart_path = "results/security_audit_report.png"
+            chart_path = str(RESULTS_DIR / "security_audit_report.png")
             self.logger.info(f"Starting chart generation at {chart_path}")
 
             try:

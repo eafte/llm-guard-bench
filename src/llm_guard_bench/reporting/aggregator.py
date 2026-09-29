@@ -22,6 +22,8 @@ import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 
+from llm_guard_bench.settings import RESULTS_DIR
+
 logger = logging.getLogger(__name__)
 
 # ── Design System ──────────────────────────────────────────────────────────────
@@ -269,7 +271,7 @@ class ResultsAggregator:
     def _load_results_from_json(self, session_id: str) -> list[dict]:
         """Load results from JSONL file in results/ directory as fallback."""
         try:
-            jsonl_file = Path("results") / f"session_{session_id}.jsonl"
+            jsonl_file = RESULTS_DIR / f"session_{session_id}.jsonl"
             if not jsonl_file.exists():
                 logger.debug(f"JSON file not found: {jsonl_file}")
                 return []
