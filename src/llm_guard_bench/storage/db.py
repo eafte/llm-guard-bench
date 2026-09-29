@@ -275,7 +275,7 @@ class DatabaseManager:
             )
             await conn.commit()
 
-    async def get_test_results_count(self, session_id: str = None) -> int:
+    async def get_test_results_count(self, session_id: str | None = None) -> int:
         """
         Get the count of records in test_results table.
         BULLETPROOF: Used for validation after benchmark completion.

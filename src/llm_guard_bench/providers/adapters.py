@@ -37,7 +37,7 @@ class BaseAdapter(ABC):
         self,
         system_prompt: str,
         user_prompt: str,
-        override_temperature: float = None,
+        override_temperature: float | None = None,
     ) -> str:
         """Generate a model response for the provided prompts."""
         raise NotImplementedError
@@ -46,7 +46,7 @@ class BaseAdapter(ABC):
     async def generate_multi_turn(
         self,
         messages: list[dict[str, str]],
-        override_temperature: float = None,
+        override_temperature: float | None = None,
     ) -> str:
         """
         Generate a model response for multi-turn conversation.
@@ -146,7 +146,7 @@ class OllamaAdapter(BaseAdapter):
         self,
         system_prompt: str,
         user_prompt: str,
-        override_temperature: float = None,
+        override_temperature: float | None = None,
     ) -> str:
         temperature = (
             override_temperature if override_temperature is not None else self.default_temperature
@@ -186,7 +186,7 @@ class OllamaAdapter(BaseAdapter):
     async def generate_multi_turn(
         self,
         messages: list[dict[str, str]],
-        override_temperature: float = None,
+        override_temperature: float | None = None,
     ) -> str:
         """Generate response for multi-turn conversation."""
         temperature = (
@@ -294,7 +294,7 @@ class GroqAdapter(BaseAdapter):
         self,
         system_prompt: str,
         user_prompt: str,
-        override_temperature: float = None,
+        override_temperature: float | None = None,
     ) -> str:
         temperature = (
             override_temperature if override_temperature is not None else self.default_temperature
@@ -333,7 +333,7 @@ class GroqAdapter(BaseAdapter):
     async def generate_multi_turn(
         self,
         messages: list[dict[str, str]],
-        override_temperature: float = None,
+        override_temperature: float | None = None,
     ) -> str:
         """Generate response for multi-turn conversation."""
         temperature = (
@@ -390,7 +390,7 @@ def _get_default_ollama_url() -> str:
     return "http://localhost:11434"
 
 
-def get_adapter(provider: str, model_name: str, api_key: str = None) -> BaseAdapter:
+def get_adapter(provider: str, model_name: str, api_key: str | None = None) -> BaseAdapter:
     """Factory for provider-specific adapters."""
     normalized = (provider or "").strip().lower()
 
