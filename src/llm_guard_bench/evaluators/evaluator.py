@@ -216,7 +216,7 @@ class JudgeLLMEvaluator(BaseEvaluator):
         transient failures (e.g., Groq API rate limits, network timeouts).
 
         The judge receives a strict system prompt enforcing JSON-only output.
-        Gracefully handles empty judge responses by defaulting to AMBIGUOUS.
+        Invalid judge responses are reported as JUDGE_INVALID.
 
         Args:
             target_response: The raw response from the target LLM.
@@ -239,7 +239,7 @@ class JudgeLLMEvaluator(BaseEvaluator):
 
         try:
             if not target_response or not isinstance(target_response, str):
-                return EvaluationResult.AMBIGUOUS
+                return EvaluationResult.EVAL_ERROR
 
             grading_prompt = self._format_grading_prompt(target_response)
 
@@ -250,13 +250,12 @@ class JudgeLLMEvaluator(BaseEvaluator):
                         system_prompt=JUDGE_SYSTEM_PROMPT, user_prompt=grading_prompt
                     )
 
-                    # Gracefully handle empty judge response with fallback
                     if not judge_response or not isinstance(judge_response, str):
                         logger.warning(
                             f"Judge returned empty/invalid response (type: {type(judge_response).__name__}). "
-                            "Defaulting to AMBIGUOUS."
+                            "Returning JUDGE_INVALID."
                         )
-                        return EvaluationResult.AMBIGUOUS
+                        return EvaluationResult.JUDGE_INVALID
 
                     result = self._parse_judge_response(judge_response)
                     return result
@@ -289,6 +288,8 @@ class JudgeLLMEvaluator(BaseEvaluator):
                             f"{type(e).__name__}: {str(e)}"
                         )
                         return EvaluationResult.EVAL_ERROR
+
+            return EvaluationResult.EVAL_ERROR
 
         except Exception as e:
             logger.error(f"JudgeLLMEvaluator.evaluate() failed: {type(e).__name__}: {str(e)}")
@@ -326,8 +327,7 @@ class EvaluationEngine:
         Stage 1: Keyword-based evaluation (fast, synchronous)
         Stage 2: Judge LLM evaluation (slower, asynchronous)
 
-        Treats empty target response as PASSED (successful defense/refusal),
-        not as an error.
+        Treats empty or invalid target responses as EVAL_ERROR.
 
         Args:
             target_response: The raw response from the target LLM.
@@ -336,12 +336,11 @@ class EvaluationEngine:
             EvaluationResult after cascading through both stages.
         """
         try:
-            # Empty/None response = model refused (successful defense)
             if not target_response or not isinstance(target_response, str):
                 logging.getLogger(__name__).debug(
-                    "Target response is empty/invalid. Treating as PASSED (model successfully defended itself)."
+                    "Target response is empty/invalid. Returning EVAL_ERROR."
                 )
-                return EvaluationResult.PASSED
+                return EvaluationResult.EVAL_ERROR
 
             # Stage 1: Keyword-based evaluation
             try:
@@ -349,7 +348,10 @@ class EvaluationEngine:
                 if stage1_result == EvaluationResult.PASSED:
                     return EvaluationResult.PASSED
             except Exception:
-                pass
+                logging.getLogger(__name__).warning(
+                    "Keyword evaluation failed; continuing to judge evaluation.",
+                    exc_info=True,
+                )
 
             # Stage 2: Judge LLM evaluation
             try:
