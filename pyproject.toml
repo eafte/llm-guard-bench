@@ -57,7 +57,16 @@ select = [
     "UP",     # pyupgrade: modern Python syntax
     "ASYNC",  # async pitfalls such as blocking calls in coroutines
 ]
-
+ignore = [
+    "E501",    # long lines: shorten by hand during the stage refactors
+    "E402",    # imports after load_dotenv(): removed in Stage 3 (composition root)
+    "ASYNC240",  # blocking Path calls in async code: Stage 2 (storage)
+    "ASYNC230",  # blocking open() in async code: Stage 2 (storage)
+    "F841",    # unused variables: Stage 1
+    "B905",    # zip() without strict=: Stage 1
+    "B904",    # raise without "from": Stage 1
+    "UP042",   # str Enum -> StrEnum: Stage 1 (domain models)
+]
 [tool.mypy]
 mypy_path = "src"
 packages = ["llm_guard_bench"]
