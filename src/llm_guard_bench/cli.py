@@ -23,12 +23,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Core module imports - absolute paths per architectural constraints
-from db.db import DatabaseManager
-from core.loader import AttackLoader
-from core.adapters import GroqAdapter, get_adapter
-from core.models import AttackDefinition
-from core.pipeline import BenchmarkPipeline
-from analysis.aggregator import ResultsAggregator
+from llm_guard_bench.storage.db import DatabaseManager
+from llm_guard_bench.streaming_io.loader import AttackLoader
+from llm_guard_bench.providers.adapters import GroqAdapter, get_adapter
+from llm_guard_bench.domain.models import AttackDefinition
+from llm_guard_bench.pipelines.pipeline import BenchmarkPipeline
+from llm_guard_bench.reporting.aggregator import ResultsAggregator
 
 # Standard production logger configuration
 logging.basicConfig(

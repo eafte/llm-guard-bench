@@ -11,8 +11,8 @@ from pathlib import Path
 
 import aiosqlite
 
-from config.settings import DB_PATH, RESULTS_DIR
-from core.models import AttackDefinition, SessionSummary, TestResult
+from llm_guard_bench.settings import DB_PATH, RESULTS_DIR
+from llm_guard_bench.domain.models import AttackDefinition, SessionSummary, TestResult
 
 logger = logging.getLogger(__name__)
 

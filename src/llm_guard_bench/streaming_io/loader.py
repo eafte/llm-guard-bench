@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 import logging
 
-from core.models import AttackDefinition
+from llm_guard_bench.domain.models import AttackDefinition
 
 logger = logging.getLogger(__name__)
 

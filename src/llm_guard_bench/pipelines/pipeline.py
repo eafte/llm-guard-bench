@@ -11,9 +11,9 @@ import logging
 import time
 from typing import List, Optional
 
-from core.adapters import BaseAdapter
-from core.evaluator import EvaluationEngine, EvaluationResult
-from core.models import AttackDefinition, EvalResult, EvaluationStatus, TestResult
+from llm_guard_bench.providers.adapters import BaseAdapter
+from llm_guard_bench.evaluators.evaluator import EvaluationEngine, EvaluationResult
+from llm_guard_bench.domain.models import AttackDefinition, EvalResult, EvaluationStatus, TestResult
 
 logger = logging.getLogger(__name__)
 

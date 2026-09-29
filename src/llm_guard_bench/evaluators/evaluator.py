@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Optional, Dict
 
-from core.adapters import BaseAdapter
+from llm_guard_bench.providers.adapters import BaseAdapter
 
 
 class EvaluationResult(str, Enum):
