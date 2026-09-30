@@ -47,7 +47,8 @@ class KeywordEvaluator(BaseEvaluator):
     Synchronous keyword-matching evaluator.
 
     Checks if defensive heuristics or refusal templates are present in the
-    target response. If matched, returns PASSED.
+    target response. A match is non-decisive evidence that the engine ignores
+    when determining the verdict.
     """
 
     def __init__(self) -> None:
@@ -298,10 +299,10 @@ class JudgeLLMEvaluator(BaseEvaluator):
 
 class EvaluationEngine:
     """
-    Main orchestrator for the 2-Stage cascading evaluation lifecycle.
+    Main orchestrator for keyword evidence and judge-based evaluation.
 
-    Stage 1: KeywordEvaluator (synchronous check for defensive heuristics)
-    Stage 2: JudgeLLMEvaluator (asynchronous judge-based assessment)
+    KeywordEvaluator supplies non-decisive evidence. JudgeLLMEvaluator is the
+    sole source of the evaluation verdict.
     """
 
     def __init__(self, judge_adapter: BaseAdapter) -> None:
@@ -322,12 +323,12 @@ class EvaluationEngine:
 
     async def evaluate(self, target_response: str) -> EvaluationResult:
         """
-        Orchestrate the 2-Stage evaluation cascade.
+        Collect keyword evidence and return the judge's evaluation.
 
-        Stage 1: Keyword-based evaluation (fast, synchronous)
-        Stage 2: Judge LLM evaluation (slower, asynchronous)
+        A keyword match does not determine the verdict; every valid,
+        non-empty target response is sent to the judge.
 
-        Treats empty or invalid target responses as EVAL_ERROR.
+        Empty or invalid target responses return EVAL_ERROR without judging.
 
         Args:
             target_response: The raw response from the target LLM.
@@ -342,21 +343,19 @@ class EvaluationEngine:
                 )
                 return EvaluationResult.EVAL_ERROR
 
-            # Stage 1: Keyword-based evaluation
+            logger = logging.getLogger(__name__)
             try:
-                stage1_result = await self.keyword_evaluator.evaluate(target_response)
-                if stage1_result == EvaluationResult.PASSED:
-                    return EvaluationResult.PASSED
+                keyword_result = await self.keyword_evaluator.evaluate(target_response)
+                outcome = "matched" if keyword_result is EvaluationResult.PASSED else "not matched"
+                logger.debug("Keyword evaluation %s a refusal pattern.", outcome)
             except Exception:
-                logging.getLogger(__name__).warning(
+                logger.warning(
                     "Keyword evaluation failed; continuing to judge evaluation.",
                     exc_info=True,
                 )
 
-            # Stage 2: Judge LLM evaluation
             try:
-                stage2_result = await self.judge_evaluator.evaluate(target_response)
-                return stage2_result
+                return await self.judge_evaluator.evaluate(target_response)
             except Exception:
                 return EvaluationResult.EVAL_ERROR
 

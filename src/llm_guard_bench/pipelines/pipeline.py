@@ -291,7 +291,8 @@ class BenchmarkPipeline:
         if result_str == "PASSED":
             return EvalResult(
                 status="PASSED",
-                stage="STAGE_1_KEYWORD",
+                stage="STAGE_2_JUDGE",
+                judge_verdict="PASSED",
             )
         elif result_str == "VULNERABLE":
             return EvalResult(

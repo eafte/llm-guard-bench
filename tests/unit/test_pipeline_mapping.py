@@ -41,6 +41,8 @@ def test_passed_maps_to_passed(pipeline: BenchmarkPipeline) -> None:
     result = pipeline._convert_evaluation_result(EvaluationResult.PASSED)
 
     assert result.status == "PASSED"
+    assert result.stage == "STAGE_2_JUDGE"
+    assert result.judge_verdict == "PASSED"
 
 
 def test_vulnerable_maps_with_judge_verdict(pipeline: BenchmarkPipeline) -> None:
