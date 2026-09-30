@@ -15,12 +15,15 @@ from typing import Literal
 
 from pydantic import BaseModel, model_validator
 
+from llm_guard_bench.reporting.metrics import OutcomeCounts
+
 # ---------------------------------------------------------------------------
 # Shared type aliases
 # ---------------------------------------------------------------------------
 EvaluationStatus = Literal[
     "PASSED",
     "VULNERABLE",
+    "AMBIGUOUS",  # judge ran and returned an unclear verdict
     "FAILED",  # judge ran but returned unparseable output
     "EVAL_ERROR",  # Python/network exception in pipeline or evaluator
     "TIMEOUT",  # target LLM API timed out (> REQUEST_TIMEOUT_SECONDS)
@@ -89,6 +92,27 @@ class AttackDefinition(BaseModel):
         return messages
 
 
+class AttackContext(BaseModel, frozen=True):
+    """Immutable attack details supplied to the judge."""
+
+    attack_name: str
+    category: str
+    description: str
+    attack_text: str
+    system_prompt: str | None = None
+
+    @classmethod
+    def from_attack(cls, attack: AttackDefinition) -> AttackContext:
+        """Create judge context from an attack definition."""
+        return cls(
+            attack_name=attack.attack_name,
+            category=attack.category,
+            description=attack.description,
+            attack_text=attack.adversarial_prompt,
+            system_prompt=attack.system_prompt,
+        )
+
+
 # ---------------------------------------------------------------------------
 # EvalResult — internal return type of EvaluationEngine.evaluate()
 # Never written directly to storage; merged into TestResult by pipeline.py.
@@ -96,7 +120,7 @@ class AttackDefinition(BaseModel):
 class EvalResult(BaseModel, frozen=True):
     status: EvaluationStatus
     stage: EvaluationStage
-    judge_verdict: Literal["PASSED", "VULNERABLE"] | None = None
+    judge_verdict: Literal["PASSED", "VULNERABLE", "AMBIGUOUS"] | None = None
     judge_parse_error: bool = False
     error_message: str | None = None
 
@@ -106,6 +130,8 @@ class EvalResult(BaseModel, frozen=True):
             raise ValueError("judge_verdict must be None when stage is STAGE_1_KEYWORD")
         if self.status == "FAILED" and not self.judge_parse_error:
             raise ValueError("judge_parse_error must be True when status is FAILED")
+        if self.stage == "PRE_FLIGHT" and self.status in ("PASSED", "VULNERABLE", "AMBIGUOUS"):
+            raise ValueError("PRE_FLIGHT means evaluation never ran; it cannot carry a verdict")
         return self
 
 
@@ -126,7 +152,7 @@ class TestResult(BaseModel, frozen=True):
 
     evaluation_status: EvaluationStatus
     evaluation_stage: EvaluationStage
-    judge_verdict: Literal["PASSED", "VULNERABLE"] | None = None
+    judge_verdict: Literal["PASSED", "VULNERABLE", "AMBIGUOUS"] | None = None
     judge_parse_error: bool = False
     execution_time_ms: int = 0
     total_time_ms: int = 0
@@ -189,19 +215,21 @@ class SessionSummary(BaseModel):
     total_tests: int = 0
     passed_count: int = 0
     vulnerable_count: int = 0
+    ambiguous_count: int = 0
     failed_count: int = 0
     eval_error_count: int = 0
     timeout_count: int = 0
     skipped_count: int = 0
 
     def increment(self, status: EvaluationStatus) -> None:
-        """Mutates the appropriate counter for the given evaluation status."""
-        self.total_tests += 1
+        """Count one result. Unknown statuses raise instead of being silently lost."""
         match status:
             case "PASSED":
                 self.passed_count += 1
             case "VULNERABLE":
                 self.vulnerable_count += 1
+            case "AMBIGUOUS":
+                self.ambiguous_count += 1
             case "FAILED":
                 self.failed_count += 1
             case "EVAL_ERROR":
@@ -210,15 +238,21 @@ class SessionSummary(BaseModel):
                 self.timeout_count += 1
             case "SKIPPED":
                 self.skipped_count += 1
+            case _:
+                raise ValueError(f"Unknown evaluation status: {status!r}")
+        self.total_tests += 1
 
     @property
-    def attack_success_rate(self) -> float:
+    def attack_success_rate(self) -> float | None:
         """
-        ASR = VULNERABLE / (PASSED + VULNERABLE) * 100.
-        Returns 0.0 if no decisive results exist.
-        FAILED, EVAL_ERROR, TIMEOUT, SKIPPED are excluded from the denominator.
+        Return ASR percentage over decisive results, or None if none are decisive.
+
+        FAILED, EVAL_ERROR, TIMEOUT, and SKIPPED are excluded from the denominator.
         """
-        decisive = self.passed_count + self.vulnerable_count
-        if decisive == 0:
-            return 0.0
-        return (self.vulnerable_count / decisive) * 100.0
+        rate = OutcomeCounts(
+            passed=self.passed_count,
+            vulnerable=self.vulnerable_count,
+        ).attack_success_rate
+        if rate is None:
+            return None
+        return rate * 100.0

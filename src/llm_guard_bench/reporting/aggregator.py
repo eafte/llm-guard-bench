@@ -22,6 +22,14 @@ import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 
+from llm_guard_bench.reporting.metrics import (
+    OutcomeCounts,
+    format_percent,
+    heatmap_cell_values,
+    run_health_label,
+)
+from llm_guard_bench.settings import RESULTS_DIR
+
 logger = logging.getLogger(__name__)
 
 # ── Design System ──────────────────────────────────────────────────────────────
@@ -40,11 +48,11 @@ ACCENT_ORANGE = "#F0883E"
 STATUS_CATEGORIES = (
     "PASSED",
     "VULNERABLE",
+    "AMBIGUOUS",
     "EVAL_ERROR",
     "TIMEOUT",
     "FAILED",
     "SKIPPED",
-    "AMBIGUOUS",
 )
 
 
@@ -110,7 +118,12 @@ class ResultsAggregator:
                     "successful_runs": 0,
                     "total_vulnerable": 0,
                     "status_counts": self._count_statuses([]),
-                    "vulnerability_resistance_score": 0.0,
+                    "vulnerability_resistance_score": None,
+                    "attack_success_rate": None,
+                    "decisive_coverage": None,
+                    "completion_rate": None,
+                    "ambiguous_count": 0,
+                    "error_count": 0,
                     "vulnerability_rates": {},
                     "average_execution_time": 0.0,
                     "categories": [],
@@ -133,7 +146,18 @@ class ResultsAggregator:
                 "session_id": session_id,
                 "error": str(e),
                 "total_runs": 0,
+                "successful_runs": 0,
+                "total_vulnerable": 0,
                 "status_counts": self._count_statuses([]),
+                "vulnerability_resistance_score": None,
+                "attack_success_rate": None,
+                "decisive_coverage": None,
+                "completion_rate": None,
+                "ambiguous_count": 0,
+                "error_count": 0,
+                "vulnerability_rates": {},
+                "average_execution_time": 0.0,
+                "categories": [],
             }
 
     async def plot_vulnerability_chart(
@@ -269,7 +293,7 @@ class ResultsAggregator:
     def _load_results_from_json(self, session_id: str) -> list[dict]:
         """Load results from JSONL file in results/ directory as fallback."""
         try:
-            jsonl_file = Path("results") / f"session_{session_id}.jsonl"
+            jsonl_file = RESULTS_DIR / f"session_{session_id}.jsonl"
             if not jsonl_file.exists():
                 logger.debug(f"JSON file not found: {jsonl_file}")
                 return []
@@ -316,7 +340,12 @@ class ResultsAggregator:
                 "successful_runs": 0,
                 "total_vulnerable": 0,
                 "status_counts": self._count_statuses([]),
-                "vulnerability_resistance_score": 0.0,
+                "vulnerability_resistance_score": None,
+                "attack_success_rate": None,
+                "decisive_coverage": None,
+                "completion_rate": None,
+                "ambiguous_count": 0,
+                "error_count": 0,
                 "vulnerability_rates": {},
                 "average_execution_time": 0.0,
                 "categories": [],
@@ -324,41 +353,57 @@ class ResultsAggregator:
 
         total_runs = len(results)
         status_counts = self._count_statuses(results)
+        known_statuses = set(STATUS_CATEGORIES)
+        unknown_statuses = sorted(set(status_counts) - known_statuses)
+        if unknown_statuses:
+            logger.warning(
+                "Unknown evaluation statuses excluded from benchmark rates: %s",
+                ", ".join(unknown_statuses),
+            )
+        known_status_counts = {
+            status: count for status, count in status_counts.items() if status in known_statuses
+        }
+        outcomes = OutcomeCounts.from_status_counts(known_status_counts)
         successful_runs = status_counts["PASSED"]
         total_vulnerable = status_counts["VULNERABLE"]
+        resistance_rate = outcomes.resistance_rate
+        attack_success_rate = outcomes.attack_success_rate
+        decisive_coverage = outcomes.decisive_coverage
+        completion_rate = outcomes.completion_rate
+        vrs = round(resistance_rate * 100, 2) if resistance_rate is not None else None
+        asr = round(attack_success_rate * 100, 2) if attack_success_rate is not None else None
 
-        # VRS: proportion of decisive (non-error) results that passed
-        decisive = successful_runs + total_vulnerable
-        vrs = round(successful_runs / decisive * 100, 2) if decisive > 0 else 0.0
-
-        category_stats: defaultdict[str, dict[str, int]] = defaultdict(
-            lambda: {"vulnerable": 0, "passed": 0, "total": 0}
-        )
+        category_stats: defaultdict[str, Counter[str]] = defaultdict(Counter)
         execution_times: list[float] = []
 
         for result in results:
-            category = result.get("category", "unknown")
-            status = result.get("evaluation_status", "unknown")
+            category = str(result.get("category", "unknown"))
+            status = str(result.get("evaluation_status") or "UNKNOWN")
             exec_ms = result.get("execution_time_ms", 0)
 
             category_stats[category]["total"] += 1
-            if status == "VULNERABLE":
-                category_stats[category]["vulnerable"] += 1
-            elif status == "PASSED":
-                category_stats[category]["passed"] += 1
+            category_stats[category][status] += 1
 
             if isinstance(exec_ms, (int, float)) and exec_ms > 0:
                 execution_times.append(exec_ms / 1000.0)
 
         vulnerability_rates: dict[str, dict] = {}
         for category, stats in category_stats.items():
-            if stats["total"] > 0:
-                vulnerability_rates[category] = {
-                    "rate": round(stats["vulnerable"] / stats["total"] * 100, 2),
-                    "vulnerable": stats["vulnerable"],
-                    "passed": stats["passed"],
-                    "total": stats["total"],
-                }
+            category_status_counts = {
+                status: stats[status] for status in STATUS_CATEGORIES if stats[status]
+            }
+            category_outcomes = OutcomeCounts.from_status_counts(category_status_counts)
+            category_asr = category_outcomes.attack_success_rate
+            category_coverage = category_outcomes.decisive_coverage
+            vulnerability_rates[category] = {
+                "rate": round(category_asr * 100, 2) if category_asr is not None else None,
+                "decisive_coverage": (
+                    round(category_coverage, 4) if category_coverage is not None else None
+                ),
+                "vulnerable": category_outcomes.vulnerable,
+                "passed": category_outcomes.passed,
+                "total": stats["total"],
+            }
 
         avg_execution_time = (
             round(sum(execution_times) / len(execution_times), 2) if execution_times else 0.0
@@ -371,6 +416,13 @@ class ResultsAggregator:
             "total_vulnerable": total_vulnerable,
             "status_counts": status_counts,
             "vulnerability_resistance_score": vrs,
+            "attack_success_rate": asr,
+            "decisive_coverage": (
+                round(decisive_coverage, 4) if decisive_coverage is not None else None
+            ),
+            "completion_rate": round(completion_rate, 4) if completion_rate is not None else None,
+            "ambiguous_count": outcomes.ambiguous,
+            "error_count": outcomes.errors,
             "vulnerability_rates": vulnerability_rates,
             "average_execution_time": avg_execution_time,
             "categories": list(vulnerability_rates.keys()),
@@ -404,6 +456,8 @@ class ResultsAggregator:
             category: {
                 "VULNERABLE": 0,
                 "PASSED": 0,
+                "AMBIGUOUS": 0,
+                "SKIPPED": 0,
                 "total": 0,
                 "errors": 0,
             }
@@ -417,14 +471,16 @@ class ResultsAggregator:
                 category_data[category] = {
                     "VULNERABLE": 0,
                     "PASSED": 0,
+                    "AMBIGUOUS": 0,
+                    "SKIPPED": 0,
                     "total": 0,
                     "errors": 0,
                 }
 
             category_data[category]["total"] += 1
-            if status in ("VULNERABLE", "PASSED"):
+            if status in ("VULNERABLE", "PASSED", "AMBIGUOUS", "SKIPPED"):
                 category_data[category][status] += 1
-            else:
+            elif status in ("FAILED", "EVAL_ERROR", "TIMEOUT"):
                 category_data[category]["errors"] += 1
 
         return dict(category_data)
@@ -564,8 +620,7 @@ class ResultsAggregator:
             passed_cnt = m.get("successful_runs", 0)
             vuln_cnt = m.get("total_vulnerable", 0)
             status_counts = m.get("status_counts", {})
-            eval_error_cnt = status_counts.get("EVAL_ERROR", 0)
-            vrs = m.get("vulnerability_resistance_score", 0.0)
+            vrs = m.get("vulnerability_resistance_score")
             avg_time = m.get("average_execution_time", 0.0)
 
             status_order = list(STATUS_CATEGORIES)
@@ -596,11 +651,19 @@ class ResultsAggregator:
                 color=ACCENT_YELLOW,
                 family="monospace",
             )
-            vrs_color = ACCENT_GREEN if vrs >= 70 else ACCENT_YELLOW if vrs >= 40 else ACCENT_RED
+            vrs_color = (
+                TEXT_SECONDARY
+                if vrs is None
+                else ACCENT_GREEN
+                if vrs >= 70
+                else ACCENT_YELLOW
+                if vrs >= 40
+                else ACCENT_RED
+            )
             fig.text(
                 0.95,
                 banner_y,
-                f"VRS: {vrs:.1f}%",
+                f"VRS: {format_percent(vrs)}",
                 ha="right",
                 fontsize=9.5,
                 fontweight="bold",
@@ -754,21 +817,30 @@ class ResultsAggregator:
                 zorder=1,
             )
 
-            # Stability badge — top-right corner of Panel A
+            completion_rate = m.get("completion_rate")
+            error_count = m.get("error_count", 0)
+            health_text, health_level = run_health_label(completion_rate, error_count)
+            health_color = {
+                "ok": ACCENT_GREEN,
+                "degraded": ACCENT_ORANGE,
+                "unknown": TEXT_SECONDARY,
+            }[health_level]
+
+            # Run-health badge — top-right corner of Panel A
             ax_perf.text(
                 0.97,
                 0.97,
-                f"⬤  100% STABLE\n     EVAL_ERROR: {eval_error_cnt}",
+                f"⬤  {health_text}\n     ERRORS: {error_count}",
                 transform=ax_perf.transAxes,
                 ha="right",
                 va="top",
                 fontsize=8.5,
                 fontweight="bold",
-                color=ACCENT_GREEN,
+                color=health_color,
                 bbox=dict(
                     boxstyle="round,pad=0.5",
                     facecolor=PANEL_COLOR,
-                    edgecolor=ACCENT_GREEN,
+                    edgecolor=health_color,
                     linewidth=1.0,
                     alpha=0.95,
                 ),
@@ -788,27 +860,25 @@ class ResultsAggregator:
             # Build ordered category list and per-category vuln rates.
             # Configured categories remain present even when every result is
             # an error and therefore has no valid vulnerability rate.
-            categories = sorted(category_data.keys())
-            if not categories:
-                categories = ["UNKNOWN"]
+            if not category_data:
                 category_data = {
                     "UNKNOWN": {
                         "VULNERABLE": 0,
                         "PASSED": 0,
+                        "AMBIGUOUS": 0,
+                        "SKIPPED": 0,
                         "total": 0,
                         "errors": 0,
                     }
                 }
 
-            vuln_rates = []
-            no_data_flags = []
-            for cat in categories:
-                d = category_data[cat]
-                valid_total = d.get("VULNERABLE", 0) + d.get("PASSED", 0)
-                no_data_flags.append(valid_total == 0)
-                vuln_rates.append(
-                    round(d.get("VULNERABLE", 0) / valid_total * 100) if valid_total > 0 else 0
-                )
+            cells = heatmap_cell_values(category_data)
+            categories = [cell.category for cell in cells]
+            vuln_rates = [
+                cell.attack_success_rate if cell.attack_success_rate is not None else 0.0
+                for cell in cells
+            ]
+            no_data_flags = [cell.decisive == 0 for cell in cells]
 
             n_cats = len(categories)
             heatmap_matrix = np.array(vuln_rates, dtype=float).reshape(n_cats, 1)
@@ -819,8 +889,7 @@ class ResultsAggregator:
                 "vuln_cmap",
                 [(0.0, "#3FB950"), (0.5, "#D29922"), (1.0, "#F85149")],
                 N=512,
-            )
-            vuln_cmap.set_bad("#6E7681")
+            ).with_extremes(bad="#6E7681")
 
             im = ax_heat.imshow(
                 np.ma.masked_where(no_data_matrix, heatmap_matrix),
@@ -843,15 +912,38 @@ class ResultsAggregator:
             ax_heat.set_xticks([])
 
             # Percentage labels centred in each heatmap cell
-            for i, (rate, no_data) in enumerate(zip(vuln_rates, no_data_flags)):
+            for i, cell in enumerate(cells):
+                if cell.attack_success_rate is None:
+                    ax_heat.text(
+                        0,
+                        i - 0.08,
+                        "NO DECISIVE DATA",
+                        ha="center",
+                        va="center",
+                        fontsize=10,
+                        fontweight="bold",
+                        color=TEXT_PRIMARY,
+                    )
+                    detail_text = f"0 of {cell.total} decisive"
+                else:
+                    ax_heat.text(
+                        0,
+                        i - 0.08,
+                        f"{cell.attack_success_rate:.1f}%",
+                        ha="center",
+                        va="center",
+                        fontsize=22,
+                        fontweight="bold",
+                        color=TEXT_PRIMARY,
+                    )
+                    detail_text = f"n={cell.decisive} of {cell.total}"
                 ax_heat.text(
                     0,
-                    i,
-                    "NO DATA\n(all errors)" if no_data else f"{rate:.0f}%",
+                    i + 0.2,
+                    detail_text,
                     ha="center",
                     va="center",
-                    fontsize=10 if no_data else 22,
-                    fontweight="bold",
+                    fontsize=8,
                     color=TEXT_PRIMARY,
                 )
 
@@ -868,7 +960,7 @@ class ResultsAggregator:
                 pad=0.02,
             )
             cbar.set_label(
-                "Vulnerability Rate (%)",
+                "Attack success rate on decisive results (%)",
                 color=TEXT_SECONDARY,
                 fontsize=9,
             )

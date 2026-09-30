@@ -12,9 +12,8 @@ Security Policy:
 - Safe defaults provided for non-secret configuration
 
 Module Constants:
-- PROJECT_ROOT: Absolute path to project root directory
-- DB_PATH: SQLite database file path
-- RESULTS_DIR: Output directory for reports and artifacts
+- RESULTS_DIR: Output directory from LLM_GUARD_BENCH_RESULTS_DIR (default: ./results)
+- DB_PATH: SQLite database file path within the results directory
 - API endpoints and timeout configurations
 """
 
@@ -23,19 +22,16 @@ from pathlib import Path
 from typing import Final
 
 # ============================================================================
-# PROJECT STRUCTURE
+# RESULTS AND DATABASE PATHS
 # ============================================================================
-PROJECT_ROOT: Final[Path] = Path(__file__).parent.parent
-"""Absolute path to the llm-guard-bench project root directory."""
 
-RESULTS_DIR: Final[Path] = PROJECT_ROOT / "results"
+RESULTS_DIR: Final[Path] = (
+    Path(os.getenv("LLM_GUARD_BENCH_RESULTS_DIR", "results")).expanduser().resolve()
+)
 """Output directory for benchmark results, reports, and session artifacts."""
 
-DB_PATH: Final[Path] = PROJECT_ROOT / "results" / "guard_bench.db"
+DB_PATH: Final[Path] = RESULTS_DIR / "guard_bench.db"
 """Path to the SQLite database file for storing test results."""
-
-# Ensure results directory exists (created at startup)
-RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ============================================================================
 # DATABASE CONFIGURATION
@@ -166,9 +162,6 @@ def validate_configuration() -> None:
     Raises:
         ValueError: If required configuration is missing or invalid.
     """
-    if not PROJECT_ROOT.exists():
-        raise ValueError(f"Project root does not exist: {PROJECT_ROOT}")
-
     if not RESULTS_DIR.exists():
         try:
             RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -194,7 +187,3 @@ def validate_configuration() -> None:
 
     if CONCURRENCY_LIMIT < 1:
         raise ValueError(f"CONCURRENCY_LIMIT must be >= 1, got {CONCURRENCY_LIMIT}")
-
-
-# Validate configuration on module import
-validate_configuration()

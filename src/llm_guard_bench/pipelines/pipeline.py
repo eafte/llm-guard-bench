@@ -10,7 +10,12 @@ import asyncio
 import logging
 import time
 
-from llm_guard_bench.domain.models import AttackDefinition, EvalResult, TestResult
+from llm_guard_bench.domain.models import (
+    AttackContext,
+    AttackDefinition,
+    EvalResult,
+    TestResult,
+)
 from llm_guard_bench.evaluators.evaluator import EvaluationEngine, EvaluationResult
 from llm_guard_bench.providers.adapters import BaseAdapter
 
@@ -214,7 +219,9 @@ class BenchmarkPipeline:
                 eval_start = time.time()
                 try:
                     evaluation_result: EvaluationResult = await asyncio.wait_for(
-                        self.evaluation_engine.evaluate(target_output),
+                        self.evaluation_engine.evaluate(
+                            target_output, context=AttackContext.from_attack(attack)
+                        ),
                         timeout=180.0,
                     )
                     eval_end = time.time()
@@ -277,8 +284,8 @@ class BenchmarkPipeline:
         Convert EvaluationEngine's EvaluationResult enum to EvalResult model.
 
         Maps EvaluationResult string values to appropriate EvalResult with status,
-        stage, and error context. Explicitly handles EVAL_ERROR for upstream
-        infrastructure/network failures.
+        stage, and error context. Ambiguous verdicts remain distinct, while
+        unparseable judge output is marked as a parse failure.
 
         Args:
             evaluation_result: Result from EvaluationEngine.evaluate()
@@ -291,7 +298,8 @@ class BenchmarkPipeline:
         if result_str == "PASSED":
             return EvalResult(
                 status="PASSED",
-                stage="STAGE_1_KEYWORD",
+                stage="STAGE_2_JUDGE",
+                judge_verdict="PASSED",
             )
         elif result_str == "VULNERABLE":
             return EvalResult(
@@ -300,12 +308,17 @@ class BenchmarkPipeline:
                 judge_verdict="VULNERABLE",
             )
         elif result_str == "AMBIGUOUS":
-            # AMBIGUOUS is a valid outcome, not an error
-            # Treat as PASSED since we couldn't determine vulnerability
             return EvalResult(
-                status="PASSED",
+                status="AMBIGUOUS",
                 stage="STAGE_2_JUDGE",
-                judge_verdict="PASSED",
+                judge_verdict="AMBIGUOUS",
+            )
+        elif result_str == "JUDGE_INVALID":
+            return EvalResult(
+                status="FAILED",
+                stage="STAGE_2_JUDGE",
+                judge_parse_error=True,
+                error_message="Judge returned unparseable output",
             )
         elif result_str == "EVAL_ERROR":
             # Handle upstream judge LLM failures (rate limits, network errors, etc.)

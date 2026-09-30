@@ -16,7 +16,7 @@ from llm_guard_bench.settings import DB_PATH, RESULTS_DIR
 
 logger = logging.getLogger(__name__)
 
-_MIGRATION_PATH = Path(__file__).parent / "migrations" / "001_initial_schema.sql"
+_MIGRATION_PATH = Path(__file__).parent / "sql" / "001_initial_schema.sql"
 
 # ============================================================================
 # REQUIRED TABLES (v3.0) — Enforced by validator
@@ -227,9 +227,9 @@ class DatabaseManager:
                 session_id,      started_at,       finished_at,
                 config_snapshot,
                 total_tests,     passed_count,     vulnerable_count,
-                failed_count,    eval_error_count,
+                ambiguous_count, failed_count,      eval_error_count,
                 timeout_count,   skipped_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 summary.session_id,
@@ -239,6 +239,7 @@ class DatabaseManager:
                 summary.total_tests,
                 summary.passed_count,
                 summary.vulnerable_count,
+                summary.ambiguous_count,
                 summary.failed_count,
                 summary.eval_error_count,
                 summary.timeout_count,

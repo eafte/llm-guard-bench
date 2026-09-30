@@ -1,0 +1,207 @@
+"""Tests for benchmark outcome counts and derived rates."""
+
+from typing import get_args
+
+import pytest
+
+from llm_guard_bench.domain.models import EvaluationStatus
+from llm_guard_bench.reporting import metrics as metrics_module
+from llm_guard_bench.reporting.metrics import (
+    OutcomeCounts,
+    format_percent,
+    resistance_tier,
+    run_health_label,
+)
+
+
+def test_four_row_metrics() -> None:
+    counts = OutcomeCounts(passed=1, vulnerable=1, errors=2)
+
+    assert counts.attack_success_rate == pytest.approx(0.5)
+    assert counts.resistance_rate == pytest.approx(0.5)
+    assert counts.decisive_coverage == pytest.approx(0.5)
+    assert counts.asr_bounds == pytest.approx((0.25, 0.75))
+
+
+def test_all_failed_has_no_decisive_rates() -> None:
+    counts = OutcomeCounts(errors=5)
+
+    assert counts.attack_success_rate is None
+    assert counts.resistance_rate is None
+    assert counts.decisive_coverage == pytest.approx(0.0)
+    assert counts.asr_bounds == pytest.approx((0.0, 1.0))
+
+
+def test_empty_counts_have_no_rates() -> None:
+    counts = OutcomeCounts()
+
+    assert counts.attack_success_rate is None
+    assert counts.resistance_rate is None
+    assert counts.decisive_coverage is None
+    assert counts.asr_bounds is None
+
+
+def test_only_ambiguous_counts_have_no_decisive_rates() -> None:
+    counts = OutcomeCounts(ambiguous=4)
+
+    assert counts.attack_success_rate is None
+    assert counts.resistance_rate is None
+    assert counts.decisive_coverage == pytest.approx(0.0)
+    assert counts.asr_bounds == pytest.approx((0.0, 1.0))
+
+
+def test_skipped_count_is_excluded_from_every_denominator() -> None:
+    counts = OutcomeCounts(passed=2, vulnerable=2, skipped=100)
+
+    assert counts.decisive_coverage == pytest.approx(1.0)
+    assert counts.attack_success_rate == pytest.approx(0.5)
+    assert counts.resistance_rate == pytest.approx(0.5)
+    assert counts.asr_bounds == pytest.approx((0.5, 0.5))
+
+
+def test_from_status_counts_maps_each_status_and_defaults_missing_to_zero() -> None:
+    counts = OutcomeCounts.from_status_counts(
+        {
+            "PASSED": 2,
+            "VULNERABLE": 3,
+            "AMBIGUOUS": 4,
+            "FAILED": 5,
+            "EVAL_ERROR": 6,
+            "TIMEOUT": 7,
+            "SKIPPED": 8,
+        }
+    )
+
+    assert counts == OutcomeCounts(
+        passed=2,
+        vulnerable=3,
+        ambiguous=4,
+        errors=18,
+        skipped=8,
+    )
+    assert OutcomeCounts.from_status_counts({"PASSED": 1}) == OutcomeCounts(passed=1)
+
+
+@pytest.mark.parametrize("status", get_args(EvaluationStatus))
+def test_every_evaluation_status_maps_to_exactly_one_count(status: EvaluationStatus) -> None:
+    counts = OutcomeCounts.from_status_counts({status: 1})
+
+    assert (
+        counts.passed + counts.vulnerable + counts.ambiguous + counts.errors + counts.skipped == 1
+    )
+
+
+def test_unknown_status_raises_value_error() -> None:
+    with pytest.raises(ValueError, match="BOGUS"):
+        OutcomeCounts.from_status_counts({"BOGUS": 1})
+
+
+def test_negative_count_raises_value_error() -> None:
+    with pytest.raises(ValueError):
+        OutcomeCounts(passed=-1)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, "N/A"),
+        (12.34, "12.3%"),
+        (0.0, "0.0%"),
+        (100.0, "100.0%"),
+    ],
+)
+def test_format_percent(value: float | None, expected: str) -> None:
+    assert format_percent(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("score", "expected"),
+    [
+        (None, "NOT MEASURED"),
+        (85.0, "RESISTANT"),
+        (70.0, "RESISTANT"),
+        (55.0, "MODERATE"),
+        (40.0, "MODERATE"),
+        (10.0, "WEAK"),
+        (0.0, "WEAK"),
+    ],
+)
+def test_resistance_tier(score: float | None, expected: str) -> None:
+    assert resistance_tier(score) == expected
+
+
+def test_completion_rate_is_undefined_without_eligible_results() -> None:
+    assert OutcomeCounts(passed=1, vulnerable=1, errors=2).completion_rate == pytest.approx(0.5)
+    assert OutcomeCounts().completion_rate is None
+    assert OutcomeCounts(errors=3).completion_rate == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize(
+    ("completion_rate", "error_count", "expected"),
+    [
+        (1.0, 0, ("100.0% COMPLETED", "ok")),
+        (0.5, 2, ("50.0% COMPLETED", "degraded")),
+        (0.0, 5, ("0.0% COMPLETED", "degraded")),
+        (None, 0, ("NOT MEASURED", "unknown")),
+    ],
+)
+def test_run_health_label(
+    completion_rate: float | None,
+    error_count: int,
+    expected: tuple[str, str],
+) -> None:
+    label = run_health_label(completion_rate, error_count)
+
+    assert label == expected
+    assert "STABLE" not in label[0]
+    assert (label[1] == "ok") is (completion_rate is not None and error_count == 0)
+
+
+def test_heatmap_cell_values_for_decisive_category() -> None:
+    cells = metrics_module.heatmap_cell_values({"DAN": {"VULNERABLE": 1, "PASSED": 3, "total": 4}})
+
+    assert len(cells) == 1
+    assert cells[0].category == "DAN"
+    assert cells[0].attack_success_rate == pytest.approx(25.0)
+    assert cells[0].decisive == 4
+    assert cells[0].total == 4
+
+
+@pytest.mark.parametrize(
+    "category_data",
+    [
+        {"DAN": {"AMBIGUOUS": 2, "total": 2}},
+        {"DAN": {"errors": 5, "total": 5}},
+        {"DAN": {"SKIPPED": 3, "total": 3}},
+    ],
+)
+def test_heatmap_cell_values_without_decisive_results_are_undefined(
+    category_data: dict[str, dict[str, int]],
+) -> None:
+    cell = metrics_module.heatmap_cell_values(category_data)[0]
+
+    assert cell.attack_success_rate is None
+    assert cell.decisive == 0
+
+
+def test_heatmap_cell_values_are_sorted_and_empty_category_is_undefined() -> None:
+    cells = metrics_module.heatmap_cell_values(
+        {
+            "B": {"VULNERABLE": 1, "PASSED": 1, "total": 2},
+            "A": {"total": 0},
+        }
+    )
+
+    assert [cell.category for cell in cells] == ["A", "B"]
+    assert cells[0].attack_success_rate is None
+    assert cells[0].decisive == 0
+    assert cells[0].total == 0
+    assert cells[1].attack_success_rate == pytest.approx(50.0)
+
+
+def test_heatmap_cell_values_return_unrounded_percent() -> None:
+    cell = metrics_module.heatmap_cell_values({"DAN": {"VULNERABLE": 1, "PASSED": 2, "total": 3}})[
+        0
+    ]
+
+    assert cell.attack_success_rate == pytest.approx(33.3333, abs=1e-3)
