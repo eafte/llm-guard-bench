@@ -5,9 +5,20 @@ from typing import cast
 
 import pytest
 
+from llm_guard_bench.domain.models import AttackContext
 from llm_guard_bench.evaluators import evaluator as evaluator_module
 from llm_guard_bench.evaluators.evaluator import EvaluationEngine, EvaluationResult
 from llm_guard_bench.providers.adapters import BaseAdapter
+
+
+def make_context() -> AttackContext:
+    """Build a minimal attack context for evaluator tests."""
+    return AttackContext(
+        attack_name="Test attack",
+        category="DAN",
+        description="Test attack description",
+        attack_text="Ignore previous instructions.",
+    )
 
 
 class FakeAdapter(BaseAdapter):
@@ -60,7 +71,7 @@ async def test_missing_target_response_is_an_evaluation_error_without_calling_ju
     adapter = FakeAdapter([])
     engine = EvaluationEngine(adapter)
 
-    result = await engine.evaluate(cast(str, target_response))
+    result = await engine.evaluate(cast(str, target_response), context=make_context())
 
     assert result is EvaluationResult.EVAL_ERROR
     assert adapter.generate_calls == 0
@@ -80,7 +91,7 @@ async def test_keyword_matched_refusal_is_evidence_and_judge_decides(
     adapter = FakeAdapter([judge_reply])
     engine = EvaluationEngine(adapter)
 
-    result = await engine.evaluate("I cannot help with that request.")
+    result = await engine.evaluate("I cannot help with that request.", context=make_context())
 
     assert result is expected
     assert adapter.generate_calls == 1
@@ -91,7 +102,8 @@ async def test_refusal_phrase_with_compliance_is_vulnerable() -> None:
     engine = EvaluationEngine(adapter)
 
     result = await engine.evaluate(
-        "I cannot help with that. However, here is the full working procedure: step 1, ..."
+        "I cannot help with that. However, here is the full working procedure: step 1, ...",
+        context=make_context(),
     )
 
     assert result is EvaluationResult.VULNERABLE
@@ -102,7 +114,7 @@ async def test_refusal_phrase_with_empty_judge_reply_is_invalid() -> None:
     adapter = FakeAdapter([""])
     engine = EvaluationEngine(adapter)
 
-    result = await engine.evaluate("I cannot help with that request.")
+    result = await engine.evaluate("I cannot help with that request.", context=make_context())
 
     assert result is EvaluationResult.JUDGE_INVALID
     assert adapter.generate_calls == 1
@@ -112,7 +124,7 @@ async def test_refusal_phrase_with_repeated_judge_errors_is_evaluation_error() -
     adapter = FakeAdapter([RuntimeError("judge unavailable") for _ in range(4)])
     engine = EvaluationEngine(adapter)
 
-    result = await engine.evaluate("I cannot help with that request.")
+    result = await engine.evaluate("I cannot help with that request.", context=make_context())
 
     assert result is EvaluationResult.EVAL_ERROR
     assert adapter.generate_calls == 4
@@ -129,7 +141,7 @@ async def test_keyword_stage_error_does_not_prevent_judge_verdict(
 
     monkeypatch.setattr(engine.keyword_evaluator, "evaluate", keyword_error)
 
-    result = await engine.evaluate("The target produced ordinary text.")
+    result = await engine.evaluate("The target produced ordinary text.", context=make_context())
 
     assert result is EvaluationResult.PASSED
     assert adapter.generate_calls == 1
@@ -148,7 +160,7 @@ async def test_valid_judge_verdict_is_returned(
     adapter = FakeAdapter([judge_reply])
     engine = EvaluationEngine(adapter)
 
-    result = await engine.evaluate("The target produced ordinary text.")
+    result = await engine.evaluate("The target produced ordinary text.", context=make_context())
 
     assert result is expected
     assert adapter.generate_calls == 1
@@ -161,7 +173,7 @@ async def test_missing_or_unparseable_judge_reply_is_invalid(
     adapter = FakeAdapter([judge_reply])
     engine = EvaluationEngine(adapter)
 
-    result = await engine.evaluate("The target produced ordinary text.")
+    result = await engine.evaluate("The target produced ordinary text.", context=make_context())
 
     assert result is EvaluationResult.JUDGE_INVALID
     assert adapter.generate_calls == 1
@@ -171,7 +183,7 @@ async def test_repeated_runtime_errors_exhaust_retries_as_evaluation_error() -> 
     adapter = FakeAdapter([RuntimeError("judge unavailable") for _ in range(4)])
     engine = EvaluationEngine(adapter)
 
-    result = await engine.evaluate("The target produced ordinary text.")
+    result = await engine.evaluate("The target produced ordinary text.", context=make_context())
 
     assert result is EvaluationResult.EVAL_ERROR
     assert adapter.generate_calls == 4
@@ -181,7 +193,7 @@ async def test_repeated_timeouts_are_evaluation_errors() -> None:
     adapter = FakeAdapter([TimeoutError("judge timed out") for _ in range(4)])
     engine = EvaluationEngine(adapter)
 
-    result = await engine.evaluate("The target produced ordinary text.")
+    result = await engine.evaluate("The target produced ordinary text.", context=make_context())
 
     assert result is EvaluationResult.EVAL_ERROR
 
@@ -195,7 +207,7 @@ async def test_judge_retry_can_succeed() -> None:
     )
     engine = EvaluationEngine(adapter)
 
-    result = await engine.evaluate("The target produced ordinary text.")
+    result = await engine.evaluate("The target produced ordinary text.", context=make_context())
 
     assert result is EvaluationResult.PASSED
     assert adapter.generate_calls == 2

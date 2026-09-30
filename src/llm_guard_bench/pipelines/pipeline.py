@@ -10,7 +10,12 @@ import asyncio
 import logging
 import time
 
-from llm_guard_bench.domain.models import AttackDefinition, EvalResult, TestResult
+from llm_guard_bench.domain.models import (
+    AttackContext,
+    AttackDefinition,
+    EvalResult,
+    TestResult,
+)
 from llm_guard_bench.evaluators.evaluator import EvaluationEngine, EvaluationResult
 from llm_guard_bench.providers.adapters import BaseAdapter
 
@@ -214,7 +219,9 @@ class BenchmarkPipeline:
                 eval_start = time.time()
                 try:
                     evaluation_result: EvaluationResult = await asyncio.wait_for(
-                        self.evaluation_engine.evaluate(target_output),
+                        self.evaluation_engine.evaluate(
+                            target_output, context=AttackContext.from_attack(attack)
+                        ),
                         timeout=180.0,
                     )
                     eval_end = time.time()

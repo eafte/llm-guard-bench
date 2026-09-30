@@ -92,6 +92,27 @@ class AttackDefinition(BaseModel):
         return messages
 
 
+class AttackContext(BaseModel, frozen=True):
+    """Immutable attack details supplied to the judge."""
+
+    attack_name: str
+    category: str
+    description: str
+    attack_text: str
+    system_prompt: str | None = None
+
+    @classmethod
+    def from_attack(cls, attack: AttackDefinition) -> AttackContext:
+        """Create judge context from an attack definition."""
+        return cls(
+            attack_name=attack.attack_name,
+            category=attack.category,
+            description=attack.description,
+            attack_text=attack.adversarial_prompt,
+            system_prompt=attack.system_prompt,
+        )
+
+
 # ---------------------------------------------------------------------------
 # EvalResult — internal return type of EvaluationEngine.evaluate()
 # Never written directly to storage; merged into TestResult by pipeline.py.
