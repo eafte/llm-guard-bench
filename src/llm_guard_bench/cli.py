@@ -211,7 +211,7 @@ class LLMGuardBenchOrchestrator:
         except Exception as e:
             self.logger.error(f"Benchmark pipeline execution failed: {str(e)}")
             print(f"\n✗ Benchmark failed: {str(e)}")
-            return []
+            raise
 
     async def aggregate_and_export_results(self) -> None:
         """Aggregate results and generate metrics/charts with robust error handling."""
