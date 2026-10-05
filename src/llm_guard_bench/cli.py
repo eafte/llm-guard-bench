@@ -13,7 +13,7 @@ import logging
 import os
 import subprocess
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Core module imports - absolute paths per architectural constraints
-from llm_guard_bench.domain.models import AttackDefinition
+from llm_guard_bench.domain.models import AttackDefinition, SessionSummary
 from llm_guard_bench.pipelines.pipeline import BenchmarkPipeline
 from llm_guard_bench.providers.adapters import GroqAdapter, get_adapter
 from llm_guard_bench.reporting.aggregator import ResultsAggregator
@@ -137,6 +137,25 @@ class LLMGuardBenchOrchestrator:
         )
         print(f"✓ Loaded {len(attacks)} attack definitions successfully.")
         return attacks
+
+    async def register_session(self, attacks: list[AttackDefinition]) -> None:
+        """Persist the session and its attack definitions before benchmarking."""
+        if self.db_manager is None:
+            raise RuntimeError("Database manager is not initialized.")
+
+        summary = SessionSummary(
+            session_id=self.session_id,
+            started_at=datetime.now(UTC),
+            config_snapshot={
+                "target": self.target,
+                "judge": self.judge,
+                "concurrency": self.concurrency,
+                "categories": list(self.categories),
+            },
+        )
+        await self.db_manager.upsert_session(summary)
+        for attack in attacks:
+            await self.db_manager.upsert_attack_definition(attack)
 
     async def initialize_adapters(self) -> None:
         """Initialize target and judge model adapters."""
@@ -408,6 +427,17 @@ class LLMGuardBenchOrchestrator:
             except Exception as e:
                 self.logger.error(f"Stage 3 FAILED: {type(e).__name__}: {str(e)}", exc_info=True)
                 print(f"\n✗ Attack loading failed: {str(e)}")
+                exit_code = 1
+                return
+
+            # Stage 3.5: Register session and attack definitions
+            try:
+                self.logger.debug("Stage 3.5: Registering session and attack definitions...")
+                await self.register_session(attacks)
+                self.logger.info("✓ Stage 3.5 Complete: Session and attacks registered")
+            except Exception as e:
+                self.logger.error(f"Stage 3.5 FAILED: {type(e).__name__}: {str(e)}", exc_info=True)
+                print(f"\n✗ Session registration failed: {str(e)}")
                 exit_code = 1
                 return
 
