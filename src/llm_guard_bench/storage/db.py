@@ -25,6 +25,7 @@ from llm_guard_bench.storage.migrations import (
 logger = logging.getLogger(__name__)
 
 _MIGRATION_PATH = Path(__file__).parent / "sql" / "001_initial_schema.sql"
+EXPECTED_BEHAVIOR_REFUSAL = "REFUSAL"
 
 # ============================================================================
 # REQUIRED TABLES (v3.0) — Enforced by validator
@@ -221,7 +222,7 @@ class DatabaseManager:
 
     async def upsert_session(self, summary: SessionSummary) -> None:
         """
-        Inserts or replaces the session record.
+        Inserts or updates the session record.
         Called at session start (finished_at=NULL, all counts 0)
         and at session end (finished_at set, counts finalised).
         """
@@ -231,13 +232,25 @@ class DatabaseManager:
         conn = self._connection
         await conn.execute(
             """
-            INSERT OR REPLACE INTO sessions (
+            INSERT INTO sessions (
                 session_id,      started_at,       finished_at,
                 config_snapshot,
                 total_tests,     passed_count,     vulnerable_count,
                 ambiguous_count, failed_count,      eval_error_count,
                 timeout_count,   skipped_count
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET
+                started_at = excluded.started_at,
+                finished_at = excluded.finished_at,
+                config_snapshot = excluded.config_snapshot,
+                total_tests = excluded.total_tests,
+                passed_count = excluded.passed_count,
+                vulnerable_count = excluded.vulnerable_count,
+                ambiguous_count = excluded.ambiguous_count,
+                failed_count = excluded.failed_count,
+                eval_error_count = excluded.eval_error_count,
+                timeout_count = excluded.timeout_count,
+                skipped_count = excluded.skipped_count
             """,
             (
                 summary.session_id,
@@ -258,31 +271,43 @@ class DatabaseManager:
 
     async def upsert_attack_definition(self, attack: AttackDefinition) -> None:
         """
-        Inserts or replaces one attack definition in the attack_definitions table.
-        Uses INSERT OR REPLACE so changes to prompts.json propagate on every run.
+        Inserts or updates one attack definition in the attack_definitions table.
+        Changes to prompts.json propagate automatically on every run.
         """
-        async with aiosqlite.connect(self._db_path) as conn:
-            await conn.execute(
-                """
-                INSERT OR REPLACE INTO attack_definitions (
-                    attack_id,        category,          attack_name,
-                    description,      adversarial_prompt, system_prompt,
-                    expected_behavior, severity,          tags
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    attack.attack_id,
-                    attack.category,  # v3.0: was attack_category
-                    attack.attack_name,
-                    attack.description,
-                    attack.adversarial_prompt,
-                    attack.system_prompt,
-                    attack.expected_behavior,
-                    attack.severity,
-                    json.dumps(attack.tags),
-                ),
-            )
-            await conn.commit()
+        if self._connection is None:
+            raise RuntimeError("Database connection not established. Call connect() first.")
+
+        conn = self._connection
+        await conn.execute(
+            """
+            INSERT INTO attack_definitions (
+                attack_id,        category,          attack_name,
+                description,      adversarial_prompt, system_prompt,
+                expected_behavior, severity,          tags
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(attack_id) DO UPDATE SET
+                category = excluded.category,
+                attack_name = excluded.attack_name,
+                description = excluded.description,
+                adversarial_prompt = excluded.adversarial_prompt,
+                system_prompt = excluded.system_prompt,
+                expected_behavior = excluded.expected_behavior,
+                severity = excluded.severity,
+                tags = excluded.tags
+            """,
+            (
+                attack.attack_id,
+                attack.category,  # v3.0: was attack_category
+                attack.attack_name,
+                attack.description,
+                attack.adversarial_prompt,
+                attack.system_prompt,
+                EXPECTED_BEHAVIOR_REFUSAL,
+                attack.severity.upper(),
+                json.dumps(attack.tags),
+            ),
+        )
+        await conn.commit()
 
     async def get_test_results_count(self, session_id: str | None = None) -> int:
         """
