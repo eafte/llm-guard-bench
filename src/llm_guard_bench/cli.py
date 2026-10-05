@@ -367,6 +367,7 @@ class LLMGuardBenchOrchestrator:
             except Exception as e:
                 self.logger.error(f"Stage 1 FAILED: {type(e).__name__}: {str(e)}", exc_info=True)
                 print(f"\n✗ Environment loading failed: {str(e)}")
+                exit_code = 1
                 return
 
             # Stage 1.5: Auto-Flush (optional — clears Ollama KV-cache)
@@ -390,6 +391,7 @@ class LLMGuardBenchOrchestrator:
             except Exception as e:
                 self.logger.error(f"Stage 2 FAILED: {type(e).__name__}: {str(e)}", exc_info=True)
                 print(f"\n✗ Database initialization failed: {str(e)}")
+                exit_code = 1
                 return
 
             # Stage 3: Load Attacks
@@ -401,10 +403,12 @@ class LLMGuardBenchOrchestrator:
                 if not attacks:
                     self.logger.warning("No attack vectors loaded. Exiting pipeline.")
                     print("\n✗ No attack vectors available")
+                    exit_code = 1
                     return
             except Exception as e:
                 self.logger.error(f"Stage 3 FAILED: {type(e).__name__}: {str(e)}", exc_info=True)
                 print(f"\n✗ Attack loading failed: {str(e)}")
+                exit_code = 1
                 return
 
             # Stage 4: Initialize Adapters
@@ -415,6 +419,7 @@ class LLMGuardBenchOrchestrator:
             except Exception as e:
                 self.logger.error(f"Stage 4 FAILED: {type(e).__name__}: {str(e)}", exc_info=True)
                 print(f"\n✗ Adapter initialization failed: {str(e)}")
+                exit_code = 1
                 return
 
             # Stage 5: Run Benchmark (may have partial failures - continue anyway)
@@ -426,6 +431,7 @@ class LLMGuardBenchOrchestrator:
                 self.logger.error(f"Stage 5 WARNING: {type(e).__name__}: {str(e)}", exc_info=True)
                 print(f"\n⚠ Benchmark execution encountered errors: {str(e)[:100]}")
                 print("  Attempting to aggregate available results...")
+                exit_code = 1
 
             # Stage 6: Aggregation (CRITICAL - keep database open)
             try:
@@ -443,7 +449,10 @@ class LLMGuardBenchOrchestrator:
 
             # Final summary
             self._log_section("Benchmark Execution Complete")
-            print(f"✓ Session {self.session_id} finalized successfully.\n")
+            if exit_code == 0:
+                print(f"✓ Session {self.session_id} finalized successfully.\n")
+            else:
+                print(f"Session {self.session_id} finished with errors (exit code {exit_code}).")
             self.logger.info(f"Session {self.session_id} completed with exit_code={exit_code}")
             self.logger.info("=" * 80)
 
