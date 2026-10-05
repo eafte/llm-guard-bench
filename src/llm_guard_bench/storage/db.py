@@ -5,14 +5,22 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import aiosqlite
 
 from llm_guard_bench.domain.models import AttackDefinition, SessionSummary, TestResult
 from llm_guard_bench.settings import DB_PATH, RESULTS_DIR
+from llm_guard_bench.storage.migrations import (
+    MigrationError,
+    apply_migrations,
+    discover_migrations,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +34,29 @@ REQUIRED_TABLES = {
     "sessions",
     "attack_definitions",
 }
+
+
+def _initialize_database(db_path: Path) -> None:
+    """Apply versioned migrations to a SQLite database in a worker thread."""
+    with closing(sqlite3.connect(db_path)) as conn:
+        table_names = {
+            row[0]
+            for row in conn.execute(
+                """
+                SELECT name FROM sqlite_master
+                WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+                """
+            )
+        }
+        if "schema_migrations" not in table_names and table_names:
+            raise MigrationError(
+                "This database predates versioned migrations and must not be "
+                "modified automatically; use a new database file. The "
+                "schema_migrations table is missing."
+            )
+
+        conn.execute("PRAGMA journal_mode=WAL")
+        apply_migrations(conn, discover_migrations(_MIGRATION_PATH.parent))
 
 
 class DatabaseManager:
@@ -75,30 +106,7 @@ class DatabaseManager:
 
         BULLETPROOF: Validates schema after migration and raises if tables are missing.
         """
-        migration_sql = _MIGRATION_PATH.read_text(encoding="utf-8")
-
-        # Remove old corrupted database if schema is invalid
-        if self._db_path.exists():
-            try:
-                # Quick check for schema validity before full migration
-                existing_tables = await self._get_table_names()
-                if existing_tables and not REQUIRED_TABLES.issubset(existing_tables):
-                    logger.warning(
-                        f"Database at {self._db_path} has invalid schema. "
-                        f"Expected tables: {REQUIRED_TABLES}, Found: {existing_tables}. "
-                        f"Rebuilding database..."
-                    )
-                    # Backup old database
-                    backup_path = self._db_path.with_suffix(".db.backup")
-                    self._db_path.rename(backup_path)
-                    logger.info(f"Backed up corrupted database to {backup_path}")
-            except Exception as e:
-                logger.debug(f"Schema pre-check failed (expected if DB is new): {e}")
-
-        # Apply migrations
-        async with aiosqlite.connect(self._db_path) as conn:
-            await conn.executescript(migration_sql)
-            await conn.commit()
+        await asyncio.to_thread(_initialize_database, self._db_path)
         logger.info("Database initialised at %s", self._db_path)
 
         # Validate schema after migration
