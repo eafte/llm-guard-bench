@@ -16,6 +16,7 @@ STAGES = (
     "initialize_adapters",
     "run_benchmark",
     "aggregate_and_export_results",
+    "finalize_session",
     "cleanup",
 )
 
@@ -165,6 +166,7 @@ async def test_happy_path_runs_stages_in_order_and_reports_success(
         "initialize_adapters",
         "run_benchmark",
         "aggregate_and_export_results",
+        "finalize_session",
         "cleanup",
     ]
     assert "finalized successfully" in capsys.readouterr().out

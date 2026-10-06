@@ -10,6 +10,7 @@ import json
 import logging
 import sqlite3
 from contextlib import closing
+from datetime import datetime
 from pathlib import Path
 
 import aiosqlite
@@ -283,6 +284,75 @@ class DatabaseManager:
             ),
         )
         await conn.commit()
+
+    async def finalize_session(self, session_id: str, finished_at: datetime) -> None:
+        if self._connection is None:
+            raise RuntimeError("Database connection not established. Call connect() first.")
+
+        conn = self._connection
+        missing_session = False
+        try:
+            cursor = await conn.execute(
+                """
+                UPDATE sessions
+                SET finished_at = ?,
+                    total_tests = (
+                        SELECT COUNT(*) FROM test_results WHERE session_id = ?
+                    ),
+                    passed_count = (
+                        SELECT COUNT(*) FROM test_results
+                        WHERE session_id = ? AND evaluation_status = 'PASSED'
+                    ),
+                    vulnerable_count = (
+                        SELECT COUNT(*) FROM test_results
+                        WHERE session_id = ? AND evaluation_status = 'VULNERABLE'
+                    ),
+                    ambiguous_count = (
+                        SELECT COUNT(*) FROM test_results
+                        WHERE session_id = ? AND evaluation_status = 'AMBIGUOUS'
+                    ),
+                    failed_count = (
+                        SELECT COUNT(*) FROM test_results
+                        WHERE session_id = ? AND evaluation_status = 'FAILED'
+                    ),
+                    eval_error_count = (
+                        SELECT COUNT(*) FROM test_results
+                        WHERE session_id = ? AND evaluation_status = 'EVAL_ERROR'
+                    ),
+                    timeout_count = (
+                        SELECT COUNT(*) FROM test_results
+                        WHERE session_id = ? AND evaluation_status = 'TIMEOUT'
+                    ),
+                    skipped_count = (
+                        SELECT COUNT(*) FROM test_results
+                        WHERE session_id = ? AND evaluation_status = 'SKIPPED'
+                    )
+                WHERE session_id = ?
+                """,
+                (
+                    finished_at.isoformat(),
+                    session_id,
+                    session_id,
+                    session_id,
+                    session_id,
+                    session_id,
+                    session_id,
+                    session_id,
+                    session_id,
+                    session_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                missing_session = True
+            else:
+                await conn.commit()
+        except Exception:
+            await conn.rollback()
+            raise
+
+        if missing_session:
+            await conn.rollback()
+            raise StorageError(f"Cannot finalize unknown session {session_id}")
 
     async def upsert_attack_definition(self, attack: AttackDefinition) -> None:
         """

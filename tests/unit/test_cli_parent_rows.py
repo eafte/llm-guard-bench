@@ -68,6 +68,7 @@ def _make_orchestrator(
         "initialize_adapters",
         "run_benchmark",
         "aggregate_and_export_results",
+        "finalize_session",
         "cleanup",
     )
     for stage in stages:

@@ -157,6 +157,12 @@ class LLMGuardBenchOrchestrator:
         for attack in attacks:
             await self.db_manager.upsert_attack_definition(attack)
 
+    async def finalize_session(self) -> None:
+        """Finalize this session's persisted results and counts."""
+        if self.db_manager is None:
+            raise RuntimeError("Database manager is not initialized.")
+        await self.db_manager.finalize_session(self.session_id, datetime.now(UTC))
+
     async def initialize_adapters(self) -> None:
         """Initialize target and judge model adapters."""
         self._log_section("Initializing Network Adapters")
@@ -475,6 +481,16 @@ class LLMGuardBenchOrchestrator:
                 self.logger.error(f"Stage 6 CRITICAL: {type(e).__name__}: {str(e)}", exc_info=True)
                 print(f"\n✗ Aggregation failed: {type(e).__name__}")
                 print(f"  {str(e)[:150]}")
+                exit_code = 1
+
+            # Stage 7: Finalize session
+            try:
+                self.logger.debug("Stage 7: Finalizing session...")
+                await self.finalize_session()
+                self.logger.info("✓ Stage 7 Complete: Session finalized")
+            except Exception as e:
+                self.logger.error(f"Stage 7 FAILED: {type(e).__name__}: {str(e)}", exc_info=True)
+                print(f"\n✗ Session finalization failed: {str(e)}")
                 exit_code = 1
 
             # Final summary
