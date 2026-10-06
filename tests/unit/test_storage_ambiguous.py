@@ -81,6 +81,13 @@ async def _initialize_database(database_manager: DatabaseManager, database_path:
     await database_manager.connect()
     await database_manager.initialize()
     _seed_attack_definition(database_path)
+    await database_manager.upsert_session(
+        SessionSummary(
+            session_id=SESSION_ID,
+            started_at=datetime.now(UTC),
+            config_snapshot={},
+        )
+    )
 
 
 @pytest.mark.parametrize("status", get_args(EvaluationStatus))

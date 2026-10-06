@@ -16,6 +16,7 @@ import aiosqlite
 
 from llm_guard_bench.domain.models import AttackDefinition, SessionSummary, TestResult
 from llm_guard_bench.settings import DB_PATH, RESULTS_DIR
+from llm_guard_bench.storage.errors import StorageError
 from llm_guard_bench.storage.migrations import (
     MigrationError,
     apply_migrations,
@@ -63,7 +64,7 @@ def _initialize_database(db_path: Path) -> None:
 class DatabaseManager:
     def __init__(self, db_path: Path = DB_PATH) -> None:
         self._db_path = db_path
-        self._connection = None
+        self._connection: aiosqlite.Connection | None = None
         self._schema_validated = False
         RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -73,7 +74,16 @@ class DatabaseManager:
         Called by the orchestrator on startup.
         """
         if self._connection is None:
-            self._connection = await aiosqlite.connect(self._db_path)
+            connection = await aiosqlite.connect(self._db_path)
+            await connection.execute("PRAGMA foreign_keys=ON")
+            cursor = await connection.execute("PRAGMA foreign_keys")
+            row = await cursor.fetchone()
+            if row is None or row[0] != 1:
+                await connection.close()
+                self._connection = None
+                raise StorageError("SQLite foreign_keys pragma did not take effect")
+
+            self._connection = connection
             logger.info(f"Connected to database at {self._db_path}")
         else:
             logger.debug("Database connection already established")
@@ -166,45 +176,50 @@ class DatabaseManager:
             raise RuntimeError("Database connection not established. Call connect() first.")
 
         conn = self._connection
-        await conn.execute(
-            """
-            INSERT INTO test_results (
-                session_id,        timestamp,          model_name,
-                attack_id,         category,           adversarial_prompt,
-                system_prompt,     raw_llm_response,   evaluation_status,
-                evaluation_stage,  judge_verdict,      judge_parse_error,
-                execution_time_ms, total_time_ms,      prompt_tokens,
-                completion_tokens, http_status_code,   error_message
-            ) VALUES (
-                ?, ?, ?,
-                ?, ?, ?,
-                ?, ?, ?,
-                ?, ?, ?,
-                ?, ?, ?,
-                ?, ?, ?
+        try:
+            await conn.execute(
+                """
+                INSERT INTO test_results (
+                    session_id,        timestamp,          model_name,
+                    attack_id,         category,           adversarial_prompt,
+                    system_prompt,     raw_llm_response,   evaluation_status,
+                    evaluation_stage,  judge_verdict,      judge_parse_error,
+                    execution_time_ms, total_time_ms,      prompt_tokens,
+                    completion_tokens, http_status_code,   error_message
+                ) VALUES (
+                    ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?, ?
+                )
+                """,
+                (
+                    result.session_id,
+                    result.timestamp.isoformat(),
+                    result.model_name,  # v3.0: was target_model_name
+                    result.attack_id,
+                    result.category,  # v3.0: was attack_category
+                    result.adversarial_prompt,
+                    result.system_prompt,
+                    result.raw_llm_response,
+                    result.evaluation_status,
+                    result.evaluation_stage,
+                    result.judge_verdict,
+                    int(result.judge_parse_error),
+                    result.execution_time_ms,
+                    result.total_time_ms,
+                    result.prompt_tokens,
+                    result.completion_tokens,
+                    result.http_status_code,
+                    result.error_message,
+                ),
             )
-            """,
-            (
-                result.session_id,
-                result.timestamp.isoformat(),
-                result.model_name,  # v3.0: was target_model_name
-                result.attack_id,
-                result.category,  # v3.0: was attack_category
-                result.adversarial_prompt,
-                result.system_prompt,
-                result.raw_llm_response,
-                result.evaluation_status,
-                result.evaluation_stage,
-                result.judge_verdict,
-                int(result.judge_parse_error),
-                result.execution_time_ms,
-                result.total_time_ms,
-                result.prompt_tokens,
-                result.completion_tokens,
-                result.http_status_code,
-                result.error_message,
-            ),
-        )
+        except Exception:
+            await conn.rollback()
+            raise
+
         await conn.commit()
         logger.debug(f"Result persisted for session {result.session_id}, attack {result.attack_id}")
 
