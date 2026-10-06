@@ -48,9 +48,11 @@ async def test_fresh_database_records_initial_schema_migration(
     await database_manager.initialize()
 
     with sqlite3.connect(tmp_path / "test.db") as connection:
-        rows = connection.execute("SELECT version, name FROM schema_migrations").fetchall()
+        rows = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
 
-    assert rows == [(1, "initial_schema")]
+    assert rows == [(1, "initial_schema"), (2, "unique_results")]
 
 
 async def test_initialize_twice_records_initial_migration_only_once(
@@ -62,9 +64,11 @@ async def test_initialize_twice_records_initial_migration_only_once(
     await database_manager.initialize()
 
     with sqlite3.connect(tmp_path / "test.db") as connection:
-        rows = connection.execute("SELECT version, name FROM schema_migrations").fetchall()
+        rows = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
 
-    assert rows == [(1, "initial_schema")]
+    assert rows == [(1, "initial_schema"), (2, "unique_results")]
 
 
 async def test_legacy_database_without_migration_tracking_is_preserved(

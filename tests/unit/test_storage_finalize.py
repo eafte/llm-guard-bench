@@ -54,6 +54,7 @@ def _make_result(
     status: EvaluationStatus,
     *,
     session_id: str = SESSION_ID,
+    model_name: str = "test-model",
 ) -> ResultRecord:
     stage: EvaluationStage = "STAGE_2_JUDGE"
     verdict: Literal["PASSED", "VULNERABLE", "AMBIGUOUS"] | None = None
@@ -70,7 +71,7 @@ def _make_result(
     return ResultRecord(
         session_id=session_id,
         timestamp=datetime.now(UTC),
-        model_name="test-model",
+        model_name=model_name,
         attack_id=ATTACK_ID,
         category="DAN",
         adversarial_prompt="A harmless test prompt.",
@@ -123,8 +124,8 @@ async def test_finalize_session_counts_results_by_status(
 ) -> None:
     await _initialize_database(database_manager)
     await _add_parents(database_manager)
-    for status in ("PASSED", "PASSED", "VULNERABLE", "AMBIGUOUS", "EVAL_ERROR"):
-        await database_manager.insert_result(_make_result(status))
+    for index, status in enumerate(("PASSED", "PASSED", "VULNERABLE", "AMBIGUOUS", "EVAL_ERROR")):
+        await database_manager.insert_result(_make_result(status, model_name=f"model-{index}"))
     finished_at = datetime.now(UTC)
 
     await database_manager.finalize_session(SESSION_ID, finished_at)
