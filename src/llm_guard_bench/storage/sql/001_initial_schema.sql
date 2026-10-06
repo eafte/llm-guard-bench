@@ -1,12 +1,8 @@
 -- =============================================================================
 -- LLM-Guard-Bench: Initial Schema Migration
 -- Version: 001
--- Applied by: DatabaseManager.initialize() on first startup.
--- Safe to re-run: all statements use IF NOT EXISTS.
+-- Applied once by the versioned migration runner in DatabaseManager.initialize().
 -- =============================================================================
-
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
 
 -- ---------------------------------------------------------------------------
 -- Primary results table

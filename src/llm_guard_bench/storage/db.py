@@ -5,18 +5,29 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import sqlite3
+from contextlib import closing
+from datetime import datetime
 from pathlib import Path
 
 import aiosqlite
 
 from llm_guard_bench.domain.models import AttackDefinition, SessionSummary, TestResult
-from llm_guard_bench.settings import DB_PATH, RESULTS_DIR
+from llm_guard_bench.settings import DB_PATH
+from llm_guard_bench.storage.errors import StorageError
+from llm_guard_bench.storage.migrations import (
+    MigrationError,
+    apply_migrations,
+    discover_migrations,
+)
 
 logger = logging.getLogger(__name__)
 
 _MIGRATION_PATH = Path(__file__).parent / "sql" / "001_initial_schema.sql"
+EXPECTED_BEHAVIOR_REFUSAL = "REFUSAL"
 
 # ============================================================================
 # REQUIRED TABLES (v3.0) — Enforced by validator
@@ -28,12 +39,35 @@ REQUIRED_TABLES = {
 }
 
 
+def _initialize_database(db_path: Path) -> None:
+    """Apply versioned migrations to a SQLite database in a worker thread."""
+    with closing(sqlite3.connect(db_path)) as conn:
+        table_names = {
+            row[0]
+            for row in conn.execute(
+                """
+                SELECT name FROM sqlite_master
+                WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+                """
+            )
+        }
+        if "schema_migrations" not in table_names and table_names:
+            raise MigrationError(
+                "This database predates versioned migrations and must not be "
+                "modified automatically; use a new database file. The "
+                "schema_migrations table is missing."
+            )
+
+        conn.execute("PRAGMA journal_mode=WAL")
+        apply_migrations(conn, discover_migrations(_MIGRATION_PATH.parent))
+
+
 class DatabaseManager:
-    def __init__(self, db_path: Path = DB_PATH) -> None:
+    def __init__(self, db_path: Path = DB_PATH, results_dir: Path | None = None) -> None:
         self._db_path = db_path
-        self._connection = None
+        self.results_dir = results_dir if results_dir is not None else db_path.parent
+        self._connection: aiosqlite.Connection | None = None
         self._schema_validated = False
-        RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     async def connect(self) -> None:
         """
@@ -41,7 +75,18 @@ class DatabaseManager:
         Called by the orchestrator on startup.
         """
         if self._connection is None:
-            self._connection = await aiosqlite.connect(self._db_path)
+            self._db_path.parent.mkdir(parents=True, exist_ok=True)
+            self.results_dir.mkdir(parents=True, exist_ok=True)
+            connection = await aiosqlite.connect(self._db_path)
+            await connection.execute("PRAGMA foreign_keys=ON")
+            cursor = await connection.execute("PRAGMA foreign_keys")
+            row = await cursor.fetchone()
+            if row is None or row[0] != 1:
+                await connection.close()
+                self._connection = None
+                raise StorageError("SQLite foreign_keys pragma did not take effect")
+
+            self._connection = connection
             logger.info(f"Connected to database at {self._db_path}")
         else:
             logger.debug("Database connection already established")
@@ -75,30 +120,7 @@ class DatabaseManager:
 
         BULLETPROOF: Validates schema after migration and raises if tables are missing.
         """
-        migration_sql = _MIGRATION_PATH.read_text(encoding="utf-8")
-
-        # Remove old corrupted database if schema is invalid
-        if self._db_path.exists():
-            try:
-                # Quick check for schema validity before full migration
-                existing_tables = await self._get_table_names()
-                if existing_tables and not REQUIRED_TABLES.issubset(existing_tables):
-                    logger.warning(
-                        f"Database at {self._db_path} has invalid schema. "
-                        f"Expected tables: {REQUIRED_TABLES}, Found: {existing_tables}. "
-                        f"Rebuilding database..."
-                    )
-                    # Backup old database
-                    backup_path = self._db_path.with_suffix(".db.backup")
-                    self._db_path.rename(backup_path)
-                    logger.info(f"Backed up corrupted database to {backup_path}")
-            except Exception as e:
-                logger.debug(f"Schema pre-check failed (expected if DB is new): {e}")
-
-        # Apply migrations
-        async with aiosqlite.connect(self._db_path) as conn:
-            await conn.executescript(migration_sql)
-            await conn.commit()
+        await asyncio.to_thread(_initialize_database, self._db_path)
         logger.info("Database initialised at %s", self._db_path)
 
         # Validate schema after migration
@@ -157,50 +179,55 @@ class DatabaseManager:
             raise RuntimeError("Database connection not established. Call connect() first.")
 
         conn = self._connection
-        await conn.execute(
-            """
-            INSERT INTO test_results (
-                session_id,        timestamp,          model_name,
-                attack_id,         category,           adversarial_prompt,
-                system_prompt,     raw_llm_response,   evaluation_status,
-                evaluation_stage,  judge_verdict,      judge_parse_error,
-                execution_time_ms, total_time_ms,      prompt_tokens,
-                completion_tokens, http_status_code,   error_message
-            ) VALUES (
-                ?, ?, ?,
-                ?, ?, ?,
-                ?, ?, ?,
-                ?, ?, ?,
-                ?, ?, ?,
-                ?, ?, ?
+        try:
+            await conn.execute(
+                """
+                INSERT INTO test_results (
+                    session_id,        timestamp,          model_name,
+                    attack_id,         category,           adversarial_prompt,
+                    system_prompt,     raw_llm_response,   evaluation_status,
+                    evaluation_stage,  judge_verdict,      judge_parse_error,
+                    execution_time_ms, total_time_ms,      prompt_tokens,
+                    completion_tokens, http_status_code,   error_message
+                ) VALUES (
+                    ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?, ?
+                )
+                """,
+                (
+                    result.session_id,
+                    result.timestamp.isoformat(),
+                    result.model_name,  # v3.0: was target_model_name
+                    result.attack_id,
+                    result.category,  # v3.0: was attack_category
+                    result.adversarial_prompt,
+                    result.system_prompt,
+                    result.raw_llm_response,
+                    result.evaluation_status,
+                    result.evaluation_stage,
+                    result.judge_verdict,
+                    int(result.judge_parse_error),
+                    result.execution_time_ms,
+                    result.total_time_ms,
+                    result.prompt_tokens,
+                    result.completion_tokens,
+                    result.http_status_code,
+                    result.error_message,
+                ),
             )
-            """,
-            (
-                result.session_id,
-                result.timestamp.isoformat(),
-                result.model_name,  # v3.0: was target_model_name
-                result.attack_id,
-                result.category,  # v3.0: was attack_category
-                result.adversarial_prompt,
-                result.system_prompt,
-                result.raw_llm_response,
-                result.evaluation_status,
-                result.evaluation_stage,
-                result.judge_verdict,
-                int(result.judge_parse_error),
-                result.execution_time_ms,
-                result.total_time_ms,
-                result.prompt_tokens,
-                result.completion_tokens,
-                result.http_status_code,
-                result.error_message,
-            ),
-        )
+        except Exception:
+            await conn.rollback()
+            raise
+
         await conn.commit()
         logger.debug(f"Result persisted for session {result.session_id}, attack {result.attack_id}")
 
         # Append to JSONL
-        jsonl_path = RESULTS_DIR / f"session_{result.session_id}.jsonl"
+        jsonl_path = self.results_dir / f"session_{result.session_id}.jsonl"
         try:
             with open(jsonl_path, "a", encoding="utf-8") as fh:
                 fh.write(result.model_dump_json() + "\n")
@@ -213,7 +240,7 @@ class DatabaseManager:
 
     async def upsert_session(self, summary: SessionSummary) -> None:
         """
-        Inserts or replaces the session record.
+        Inserts or updates the session record.
         Called at session start (finished_at=NULL, all counts 0)
         and at session end (finished_at set, counts finalised).
         """
@@ -223,13 +250,25 @@ class DatabaseManager:
         conn = self._connection
         await conn.execute(
             """
-            INSERT OR REPLACE INTO sessions (
+            INSERT INTO sessions (
                 session_id,      started_at,       finished_at,
                 config_snapshot,
                 total_tests,     passed_count,     vulnerable_count,
                 ambiguous_count, failed_count,      eval_error_count,
                 timeout_count,   skipped_count
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET
+                started_at = excluded.started_at,
+                finished_at = excluded.finished_at,
+                config_snapshot = excluded.config_snapshot,
+                total_tests = excluded.total_tests,
+                passed_count = excluded.passed_count,
+                vulnerable_count = excluded.vulnerable_count,
+                ambiguous_count = excluded.ambiguous_count,
+                failed_count = excluded.failed_count,
+                eval_error_count = excluded.eval_error_count,
+                timeout_count = excluded.timeout_count,
+                skipped_count = excluded.skipped_count
             """,
             (
                 summary.session_id,
@@ -248,33 +287,114 @@ class DatabaseManager:
         )
         await conn.commit()
 
-    async def upsert_attack_definition(self, attack: AttackDefinition) -> None:
-        """
-        Inserts or replaces one attack definition in the attack_definitions table.
-        Uses INSERT OR REPLACE so changes to prompts.json propagate on every run.
-        """
-        async with aiosqlite.connect(self._db_path) as conn:
-            await conn.execute(
+    async def finalize_session(self, session_id: str, finished_at: datetime) -> None:
+        if self._connection is None:
+            raise RuntimeError("Database connection not established. Call connect() first.")
+
+        conn = self._connection
+        missing_session = False
+        try:
+            cursor = await conn.execute(
                 """
-                INSERT OR REPLACE INTO attack_definitions (
-                    attack_id,        category,          attack_name,
-                    description,      adversarial_prompt, system_prompt,
-                    expected_behavior, severity,          tags
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                UPDATE sessions
+                SET finished_at = ?,
+                    total_tests = (
+                        SELECT COUNT(*) FROM test_results WHERE session_id = ?
+                    ),
+                    passed_count = (
+                        SELECT COUNT(*) FROM test_results
+                        WHERE session_id = ? AND evaluation_status = 'PASSED'
+                    ),
+                    vulnerable_count = (
+                        SELECT COUNT(*) FROM test_results
+                        WHERE session_id = ? AND evaluation_status = 'VULNERABLE'
+                    ),
+                    ambiguous_count = (
+                        SELECT COUNT(*) FROM test_results
+                        WHERE session_id = ? AND evaluation_status = 'AMBIGUOUS'
+                    ),
+                    failed_count = (
+                        SELECT COUNT(*) FROM test_results
+                        WHERE session_id = ? AND evaluation_status = 'FAILED'
+                    ),
+                    eval_error_count = (
+                        SELECT COUNT(*) FROM test_results
+                        WHERE session_id = ? AND evaluation_status = 'EVAL_ERROR'
+                    ),
+                    timeout_count = (
+                        SELECT COUNT(*) FROM test_results
+                        WHERE session_id = ? AND evaluation_status = 'TIMEOUT'
+                    ),
+                    skipped_count = (
+                        SELECT COUNT(*) FROM test_results
+                        WHERE session_id = ? AND evaluation_status = 'SKIPPED'
+                    )
+                WHERE session_id = ?
                 """,
                 (
-                    attack.attack_id,
-                    attack.category,  # v3.0: was attack_category
-                    attack.attack_name,
-                    attack.description,
-                    attack.adversarial_prompt,
-                    attack.system_prompt,
-                    attack.expected_behavior,
-                    attack.severity,
-                    json.dumps(attack.tags),
+                    finished_at.isoformat(),
+                    session_id,
+                    session_id,
+                    session_id,
+                    session_id,
+                    session_id,
+                    session_id,
+                    session_id,
+                    session_id,
+                    session_id,
                 ),
             )
-            await conn.commit()
+            if cursor.rowcount == 0:
+                missing_session = True
+            else:
+                await conn.commit()
+        except Exception:
+            await conn.rollback()
+            raise
+
+        if missing_session:
+            await conn.rollback()
+            raise StorageError(f"Cannot finalize unknown session {session_id}")
+
+    async def upsert_attack_definition(self, attack: AttackDefinition) -> None:
+        """
+        Inserts or updates one attack definition in the attack_definitions table.
+        Changes to prompts.json propagate automatically on every run.
+        """
+        if self._connection is None:
+            raise RuntimeError("Database connection not established. Call connect() first.")
+
+        conn = self._connection
+        await conn.execute(
+            """
+            INSERT INTO attack_definitions (
+                attack_id,        category,          attack_name,
+                description,      adversarial_prompt, system_prompt,
+                expected_behavior, severity,          tags
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(attack_id) DO UPDATE SET
+                category = excluded.category,
+                attack_name = excluded.attack_name,
+                description = excluded.description,
+                adversarial_prompt = excluded.adversarial_prompt,
+                system_prompt = excluded.system_prompt,
+                expected_behavior = excluded.expected_behavior,
+                severity = excluded.severity,
+                tags = excluded.tags
+            """,
+            (
+                attack.attack_id,
+                attack.category,  # v3.0: was attack_category
+                attack.attack_name,
+                attack.description,
+                attack.adversarial_prompt,
+                attack.system_prompt,
+                EXPECTED_BEHAVIOR_REFUSAL,
+                attack.severity.upper(),
+                json.dumps(attack.tags),
+            ),
+        )
+        await conn.commit()
 
     async def get_test_results_count(self, session_id: str | None = None) -> int:
         """

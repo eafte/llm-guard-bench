@@ -18,6 +18,7 @@ from llm_guard_bench.domain.models import (
 )
 from llm_guard_bench.evaluators.evaluator import EvaluationEngine, EvaluationResult
 from llm_guard_bench.providers.adapters import BaseAdapter
+from llm_guard_bench.storage.errors import StorageError
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,8 @@ class BenchmarkPipeline:
                         attack_index=index,
                         session_id=session_id,
                     )
+            except StorageError:
+                raise
             except Exception as e:
                 # This should never happen due to try-except in _execute_single_test,
                 # but we catch any unforeseen exceptions to prevent batch failure
@@ -97,6 +100,11 @@ class BenchmarkPipeline:
 
         # Execute all tasks with exception handling to prevent batch failure
         batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        storage_errors = [result for result in batch_results if isinstance(result, StorageError)]
+        if storage_errors:
+            self.logger.error("Benchmark encountered %s persistence failures", len(storage_errors))
+            raise storage_errors[0]
 
         # Process results: collect valid TestResult objects, log any exceptions
         for idx, result in enumerate(batch_results):
@@ -275,7 +283,12 @@ class BenchmarkPipeline:
         try:
             await self.db_manager.insert_result(test_result)
         except Exception as e:
-            self.logger.warning(f"Failed to persist result for attack {attack.attack_id}: {str(e)}")
+            self.logger.error(f"Failed to persist result for attack {attack.attack_id}: {str(e)}")
+            if isinstance(e, StorageError):
+                raise
+            raise StorageError(
+                f"Failed to persist result for attack {attack.attack_id}: {e}"
+            ) from e
 
         return test_result
 

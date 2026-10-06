@@ -13,7 +13,8 @@ import logging
 import os
 import subprocess
 import sys
-from datetime import datetime
+import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -22,7 +23,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Core module imports - absolute paths per architectural constraints
-from llm_guard_bench.domain.models import AttackDefinition
+from llm_guard_bench.domain.models import AttackDefinition, SessionSummary
 from llm_guard_bench.pipelines.pipeline import BenchmarkPipeline
 from llm_guard_bench.providers.adapters import GroqAdapter, get_adapter
 from llm_guard_bench.reporting.aggregator import ResultsAggregator
@@ -66,7 +67,8 @@ class LLMGuardBenchOrchestrator:
 
     def _generate_session_id(self) -> str:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        return f"SESS_{timestamp}"
+        suffix = uuid.uuid4().hex[:8]
+        return f"SESS_{timestamp}_{suffix}"
 
     def _log_section(self, title: str) -> None:
         print(f"\n{'=' * 80}\n  {title}\n{'=' * 80}\n")
@@ -137,6 +139,31 @@ class LLMGuardBenchOrchestrator:
         )
         print(f"✓ Loaded {len(attacks)} attack definitions successfully.")
         return attacks
+
+    async def register_session(self, attacks: list[AttackDefinition]) -> None:
+        """Persist the session and its attack definitions before benchmarking."""
+        if self.db_manager is None:
+            raise RuntimeError("Database manager is not initialized.")
+
+        summary = SessionSummary(
+            session_id=self.session_id,
+            started_at=datetime.now(UTC),
+            config_snapshot={
+                "target": self.target,
+                "judge": self.judge,
+                "concurrency": self.concurrency,
+                "categories": list(self.categories),
+            },
+        )
+        await self.db_manager.upsert_session(summary)
+        for attack in attacks:
+            await self.db_manager.upsert_attack_definition(attack)
+
+    async def finalize_session(self) -> None:
+        """Finalize this session's persisted results and counts."""
+        if self.db_manager is None:
+            raise RuntimeError("Database manager is not initialized.")
+        await self.db_manager.finalize_session(self.session_id, datetime.now(UTC))
 
     async def initialize_adapters(self) -> None:
         """Initialize target and judge model adapters."""
@@ -211,7 +238,7 @@ class LLMGuardBenchOrchestrator:
         except Exception as e:
             self.logger.error(f"Benchmark pipeline execution failed: {str(e)}")
             print(f"\n✗ Benchmark failed: {str(e)}")
-            return []
+            raise
 
     async def aggregate_and_export_results(self) -> None:
         """Aggregate results and generate metrics/charts with robust error handling."""
@@ -367,6 +394,7 @@ class LLMGuardBenchOrchestrator:
             except Exception as e:
                 self.logger.error(f"Stage 1 FAILED: {type(e).__name__}: {str(e)}", exc_info=True)
                 print(f"\n✗ Environment loading failed: {str(e)}")
+                exit_code = 1
                 return
 
             # Stage 1.5: Auto-Flush (optional — clears Ollama KV-cache)
@@ -390,6 +418,7 @@ class LLMGuardBenchOrchestrator:
             except Exception as e:
                 self.logger.error(f"Stage 2 FAILED: {type(e).__name__}: {str(e)}", exc_info=True)
                 print(f"\n✗ Database initialization failed: {str(e)}")
+                exit_code = 1
                 return
 
             # Stage 3: Load Attacks
@@ -401,10 +430,23 @@ class LLMGuardBenchOrchestrator:
                 if not attacks:
                     self.logger.warning("No attack vectors loaded. Exiting pipeline.")
                     print("\n✗ No attack vectors available")
+                    exit_code = 1
                     return
             except Exception as e:
                 self.logger.error(f"Stage 3 FAILED: {type(e).__name__}: {str(e)}", exc_info=True)
                 print(f"\n✗ Attack loading failed: {str(e)}")
+                exit_code = 1
+                return
+
+            # Stage 3.5: Register session and attack definitions
+            try:
+                self.logger.debug("Stage 3.5: Registering session and attack definitions...")
+                await self.register_session(attacks)
+                self.logger.info("✓ Stage 3.5 Complete: Session and attacks registered")
+            except Exception as e:
+                self.logger.error(f"Stage 3.5 FAILED: {type(e).__name__}: {str(e)}", exc_info=True)
+                print(f"\n✗ Session registration failed: {str(e)}")
+                exit_code = 1
                 return
 
             # Stage 4: Initialize Adapters
@@ -415,6 +457,7 @@ class LLMGuardBenchOrchestrator:
             except Exception as e:
                 self.logger.error(f"Stage 4 FAILED: {type(e).__name__}: {str(e)}", exc_info=True)
                 print(f"\n✗ Adapter initialization failed: {str(e)}")
+                exit_code = 1
                 return
 
             # Stage 5: Run Benchmark (may have partial failures - continue anyway)
@@ -426,6 +469,7 @@ class LLMGuardBenchOrchestrator:
                 self.logger.error(f"Stage 5 WARNING: {type(e).__name__}: {str(e)}", exc_info=True)
                 print(f"\n⚠ Benchmark execution encountered errors: {str(e)[:100]}")
                 print("  Attempting to aggregate available results...")
+                exit_code = 1
 
             # Stage 6: Aggregation (CRITICAL - keep database open)
             try:
@@ -441,9 +485,22 @@ class LLMGuardBenchOrchestrator:
                 print(f"  {str(e)[:150]}")
                 exit_code = 1
 
+            # Stage 7: Finalize session
+            try:
+                self.logger.debug("Stage 7: Finalizing session...")
+                await self.finalize_session()
+                self.logger.info("✓ Stage 7 Complete: Session finalized")
+            except Exception as e:
+                self.logger.error(f"Stage 7 FAILED: {type(e).__name__}: {str(e)}", exc_info=True)
+                print(f"\n✗ Session finalization failed: {str(e)}")
+                exit_code = 1
+
             # Final summary
             self._log_section("Benchmark Execution Complete")
-            print(f"✓ Session {self.session_id} finalized successfully.\n")
+            if exit_code == 0:
+                print(f"✓ Session {self.session_id} finalized successfully.\n")
+            else:
+                print(f"Session {self.session_id} finished with errors (exit code {exit_code}).")
             self.logger.info(f"Session {self.session_id} completed with exit_code={exit_code}")
             self.logger.info("=" * 80)
 
