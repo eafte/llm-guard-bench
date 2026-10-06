@@ -13,6 +13,7 @@ import logging
 import os
 import subprocess
 import sys
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -66,7 +67,8 @@ class LLMGuardBenchOrchestrator:
 
     def _generate_session_id(self) -> str:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        return f"SESS_{timestamp}"
+        suffix = uuid.uuid4().hex[:8]
+        return f"SESS_{timestamp}_{suffix}"
 
     def _log_section(self, title: str) -> None:
         print(f"\n{'=' * 80}\n  {title}\n{'=' * 80}\n")
