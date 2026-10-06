@@ -12,9 +12,8 @@ from llm_guard_bench.storage.db import DatabaseManager
 
 @pytest.fixture
 async def database_manager(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> AsyncIterator[DatabaseManager]:
-    monkeypatch.setattr(db_module, "RESULTS_DIR", tmp_path)
     manager = DatabaseManager(tmp_path / "test.db")
     try:
         yield manager

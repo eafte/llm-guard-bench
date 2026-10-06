@@ -16,7 +16,7 @@ from pathlib import Path
 import aiosqlite
 
 from llm_guard_bench.domain.models import AttackDefinition, SessionSummary, TestResult
-from llm_guard_bench.settings import DB_PATH, RESULTS_DIR
+from llm_guard_bench.settings import DB_PATH
 from llm_guard_bench.storage.errors import StorageError
 from llm_guard_bench.storage.migrations import (
     MigrationError,
@@ -63,11 +63,11 @@ def _initialize_database(db_path: Path) -> None:
 
 
 class DatabaseManager:
-    def __init__(self, db_path: Path = DB_PATH) -> None:
+    def __init__(self, db_path: Path = DB_PATH, results_dir: Path | None = None) -> None:
         self._db_path = db_path
+        self.results_dir = results_dir if results_dir is not None else db_path.parent
         self._connection: aiosqlite.Connection | None = None
         self._schema_validated = False
-        RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     async def connect(self) -> None:
         """
@@ -75,6 +75,8 @@ class DatabaseManager:
         Called by the orchestrator on startup.
         """
         if self._connection is None:
+            self._db_path.parent.mkdir(parents=True, exist_ok=True)
+            self.results_dir.mkdir(parents=True, exist_ok=True)
             connection = await aiosqlite.connect(self._db_path)
             await connection.execute("PRAGMA foreign_keys=ON")
             cursor = await connection.execute("PRAGMA foreign_keys")
@@ -225,7 +227,7 @@ class DatabaseManager:
         logger.debug(f"Result persisted for session {result.session_id}, attack {result.attack_id}")
 
         # Append to JSONL
-        jsonl_path = RESULTS_DIR / f"session_{result.session_id}.jsonl"
+        jsonl_path = self.results_dir / f"session_{result.session_id}.jsonl"
         try:
             with open(jsonl_path, "a", encoding="utf-8") as fh:
                 fh.write(result.model_dump_json() + "\n")
