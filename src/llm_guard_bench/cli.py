@@ -207,6 +207,22 @@ class LLMGuardBenchOrchestrator:
             if callable(close):
                 close()
 
+        stats = getattr(attacks, "last_stats", None)
+        rejected_by_reason = getattr(stats, "rejected_by_reason", None)
+        if stats is not None and rejected_by_reason:
+            rejected_count = getattr(stats, "rejected_invalid", 0) + getattr(
+                stats, "rejected_oversized", 0
+            )
+            reasons = ", ".join(
+                f"{reason}={count}" for reason, count in sorted(rejected_by_reason.items())
+            )
+            self.logger.warning(
+                "JSONL load: accepted %s, rejected %s (%s)",
+                getattr(stats, "accepted", registered_count),
+                rejected_count,
+                reasons,
+            )
+
         return registered_count
 
     async def finalize_session(self) -> None:
