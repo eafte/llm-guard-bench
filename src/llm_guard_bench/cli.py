@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 import uuid
+from collections.abc import Iterable
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from importlib.resources import as_file, files
@@ -148,8 +149,8 @@ class LLMGuardBenchOrchestrator:
         print(f"✓ Loaded {len(attacks)} attack definitions successfully.")
         return attacks
 
-    async def register_session(self, attacks: list[AttackDefinition]) -> None:
-        """Persist the session and its attack definitions before benchmarking."""
+    async def _register_session_row(self) -> None:
+        """Persist the current session row."""
         if self.db_manager is None:
             raise RuntimeError("Database manager is not initialized.")
 
@@ -164,8 +165,34 @@ class LLMGuardBenchOrchestrator:
             },
         )
         await self.db_manager.upsert_session(summary)
+
+    async def register_session(self, attacks: list[AttackDefinition]) -> None:
+        """Persist the session and its attack definitions before benchmarking."""
+        await self._register_session_row()
+        if self.db_manager is None:
+            raise RuntimeError("Database manager is not initialized.")
+
         for attack in attacks:
             await self.db_manager.upsert_attack_definition(attack)
+
+    async def register_streaming_source(self, attacks: Iterable[AttackDefinition]) -> int:
+        """Register attacks as they are yielded, without materializing the source."""
+        if self.db_manager is None:
+            raise RuntimeError("Database manager is not initialized.")
+
+        await self._register_session_row()
+        iterator = iter(attacks)
+        registered_count = 0
+        try:
+            for attack in iterator:
+                await self.db_manager.upsert_attack_definition(attack)
+                registered_count += 1
+        finally:
+            close = getattr(iterator, "close", None)
+            if callable(close):
+                close()
+
+        return registered_count
 
     async def finalize_session(self) -> None:
         """Finalize this session's persisted results and counts."""
