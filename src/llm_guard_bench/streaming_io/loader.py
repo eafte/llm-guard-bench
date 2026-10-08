@@ -29,6 +29,7 @@ class LoadStats:
     filtered_out: int = 0
     rejected_invalid: int = 0
     rejected_oversized: int = 0
+    rejected_by_reason: dict[str, int] = field(default_factory=dict)
     samples: list[dict[str, int | str]] = field(default_factory=list)
 
     def record_rejection(self, line: int, reason: _RejectionReason) -> None:
@@ -38,6 +39,7 @@ class LoadStats:
         else:
             self.rejected_invalid += 1
 
+        self.rejected_by_reason[reason] = self.rejected_by_reason.get(reason, 0) + 1
         if len(self.samples) < 10:
             self.samples.append({"line": line, "reason": reason})
 

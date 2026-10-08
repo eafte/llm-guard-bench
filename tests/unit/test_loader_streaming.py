@@ -347,3 +347,47 @@ def test_iter_attacks_records_non_object_json_reason(
     assert attacks == []
     assert stats.rejected_invalid == 1
     assert stats.samples[0]["reason"] == "not_an_object"
+
+
+def test_load_stats_counts_rejections_by_reason_beyond_sample_limit(
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "rejections-by-reason.jsonl"
+    file_path.write_bytes(b"{invalid json\n" * 12 + b"42\n")
+    stats = LoadStats()
+
+    attacks = list(AttackLoader.iter_attacks(str(file_path), stats=stats))
+
+    assert attacks == []
+    assert stats.rejected_by_reason == {
+        "invalid_json": 12,
+        "not_an_object": 1,
+    }
+    assert len(stats.samples) == 10
+
+
+def test_load_stats_rejected_by_reason_starts_empty() -> None:
+    stats = LoadStats()
+
+    assert stats.rejected_by_reason == {}
+
+
+def test_load_stats_counts_oversized_reason_separately(
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "oversized-reason.jsonl"
+    file_path.write_bytes(b"too many bytes\n")
+    stats = LoadStats()
+
+    attacks = list(
+        AttackLoader.iter_attacks(
+            str(file_path),
+            max_line_bytes=4,
+            stats=stats,
+        )
+    )
+
+    assert attacks == []
+    assert stats.rejected_oversized == 1
+    assert stats.rejected_by_reason == {"line_too_long": 1}
+    assert stats.rejected_invalid == 0
