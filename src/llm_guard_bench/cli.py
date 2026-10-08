@@ -33,7 +33,7 @@ from llm_guard_bench.reporting.aggregator import ResultsAggregator
 from llm_guard_bench.reporting.metrics import format_percent, resistance_tier
 from llm_guard_bench.settings import RESULTS_DIR, validate_configuration
 from llm_guard_bench.storage.db import DatabaseManager
-from llm_guard_bench.streaming_io.loader import AttackLoader
+from llm_guard_bench.streaming_io.loader import AttackLoader, JsonlAttackSource
 
 # Standard production logger configuration
 logging.basicConfig(
@@ -129,9 +129,24 @@ class LLMGuardBenchOrchestrator:
         await self.db_manager.run_migrations()
         self.logger.info("Database initialized and migrations completed.")
 
-    async def load_attack_definitions(self) -> list[AttackDefinition]:
+    async def load_attack_definitions(
+        self,
+    ) -> list[AttackDefinition] | JsonlAttackSource:
         """Load attack definitions from the selected or packaged prompts file."""
         self._log_section("Loading Attack Definitions")
+        if self.attacks_file is not None:
+            attacks_path = Path(self.attacks_file)
+            if not attacks_path.exists():
+                self.logger.error(f"Attacks file not found at: {attacks_path}")
+                raise FileNotFoundError(f"Attacks file not found: {attacks_path}")
+            if attacks_path.suffix.lower() == ".jsonl":
+                source = JsonlAttackSource(
+                    str(attacks_path),
+                    self.categories if self.categories else None,
+                )
+                print(f"streaming attacks from {attacks_path}")
+                return source
+
         prompts_file = (
             nullcontext(Path(self.attacks_file))
             if self.attacks_file is not None
@@ -230,7 +245,10 @@ class LLMGuardBenchOrchestrator:
         print(f"✓ Target adapter initialized: {self.target_adapter.__class__.__name__}")
         print(f"✓ Judge adapter initialized: {self.judge_adapter.__class__.__name__}")
 
-    async def run_benchmark(self, attacks: list[AttackDefinition]) -> list:
+    async def run_benchmark(
+        self,
+        attacks: list[AttackDefinition] | JsonlAttackSource,
+    ) -> list:
         """Execute the benchmark pipeline with comprehensive logging."""
         self._log_section("Running Concurrent Benchmark Evaluation")
 
@@ -243,7 +261,11 @@ class LLMGuardBenchOrchestrator:
         print(f"  Target Model: {self.target}")
         print(f"  Judge Model: {self.judge}")
         print(f"  Concurrency Level: {self.concurrency}")
-        print(f"  Total Attack Vectors: {len(attacks)}\n")
+        if isinstance(attacks, JsonlAttackSource):
+            attack_count = attacks.count if attacks.count is not None else "unknown"
+        else:
+            attack_count = len(attacks)
+        print(f"  Total Attack Vectors: {attack_count}\n")
 
         try:
             results = await self.benchmark_pipeline.run_benchmark(
@@ -460,13 +482,18 @@ class LLMGuardBenchOrchestrator:
             try:
                 self.logger.debug("Stage 3: Loading attack definitions...")
                 attacks = await self.load_attack_definitions()
-                self.logger.info(f"✓ Stage 3 Complete: Loaded {len(attacks)} attack definitions")
+                if isinstance(attacks, JsonlAttackSource):
+                    self.logger.info("✓ Stage 3 Complete: streaming attack source ready")
+                else:
+                    self.logger.info(
+                        f"✓ Stage 3 Complete: Loaded {len(attacks)} attack definitions"
+                    )
 
-                if not attacks:
-                    self.logger.warning("No attack vectors loaded. Exiting pipeline.")
-                    print("\n✗ No attack vectors available")
-                    exit_code = 1
-                    return
+                    if not attacks:
+                        self.logger.warning("No attack vectors loaded. Exiting pipeline.")
+                        print("\n✗ No attack vectors available")
+                        exit_code = 1
+                        return
             except Exception as e:
                 self.logger.error(f"Stage 3 FAILED: {type(e).__name__}: {str(e)}", exc_info=True)
                 print(f"\n✗ Attack loading failed: {str(e)}")
@@ -476,7 +503,15 @@ class LLMGuardBenchOrchestrator:
             # Stage 3.5: Register session and attack definitions
             try:
                 self.logger.debug("Stage 3.5: Registering session and attack definitions...")
-                await self.register_session(attacks)
+                if isinstance(attacks, JsonlAttackSource):
+                    registered = await self.register_streaming_source(attacks)
+                    if registered == 0:
+                        self.logger.warning("No attack vectors loaded. Exiting pipeline.")
+                        print("\n✗ No attack vectors available")
+                        exit_code = 1
+                        return
+                else:
+                    await self.register_session(attacks)
                 self.logger.info("✓ Stage 3.5 Complete: Session and attacks registered")
             except Exception as e:
                 self.logger.error(f"Stage 3.5 FAILED: {type(e).__name__}: {str(e)}", exc_info=True)
