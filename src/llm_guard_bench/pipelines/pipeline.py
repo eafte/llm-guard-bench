@@ -71,57 +71,80 @@ class BenchmarkPipeline:
         if concurrency_limit < 1:
             raise ValueError("concurrency_limit must be at least 1")
 
-        semaphore = asyncio.Semaphore(concurrency_limit)
-        results: list[TestResult] = []
-        tasks = []
+        if not attacks:
+            return []
 
-        async def _bounded_execute(attack: AttackDefinition, index: int) -> TestResult | None:
-            """Execute single test within semaphore bounds with defensive error handling."""
-            try:
-                async with semaphore:
-                    return await self._execute_single_test(
+        worker_count = min(concurrency_limit, len(attacks))
+        queue: asyncio.Queue[tuple[int, AttackDefinition] | None] = asyncio.Queue(
+            maxsize=2 * worker_count
+        )
+        results: list[tuple[int, TestResult]] = []
+
+        async def _produce() -> None:
+            for index, attack in enumerate(attacks):
+                await queue.put((index, attack))
+            for _ in range(worker_count):
+                await queue.put(None)
+
+        async def _work() -> None:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    return
+
+                index, attack = item
+                try:
+                    result = await self._execute_single_test(
                         attack=attack,
                         model_name=model_name,
                         attack_index=index,
                         session_id=session_id,
                     )
-            except StorageError:
-                raise
-            except Exception as e:
-                # This should never happen due to try-except in _execute_single_test,
-                # but we catch any unforeseen exceptions to prevent batch failure
-                self.logger.error(
-                    f"Attack {index} ({attack.attack_id}) unhandled exception in _bounded_execute: {type(e).__name__}: {str(e)}"
-                )
-                # Return None to signal fatal error (will be logged above)
-                return None
+                except StorageError:
+                    raise
+                except Exception as exc:
+                    self.logger.error(
+                        "Attack %s (%s) unhandled exception in worker: %s: %s",
+                        index,
+                        attack.attack_id,
+                        type(exc).__name__,
+                        exc,
+                    )
+                    continue
 
-        # Create all tasks with concurrency control
-        for idx, attack in enumerate(attacks):
-            task = _bounded_execute(attack, idx)
-            tasks.append(task)
+                if isinstance(result, TestResult):
+                    results.append((index, result))
 
-        # Execute all tasks with exception handling to prevent batch failure
-        batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+        def _find_storage_error(error: BaseException) -> StorageError | None:
+            if isinstance(error, StorageError):
+                return error
+            if isinstance(error, BaseExceptionGroup):
+                for nested_error in error.exceptions:
+                    storage_error = _find_storage_error(nested_error)
+                    if storage_error is not None:
+                        return storage_error
+            return None
 
-        storage_errors = [result for result in batch_results if isinstance(result, StorageError)]
-        if storage_errors:
-            self.logger.error("Benchmark encountered %s persistence failures", len(storage_errors))
-            raise storage_errors[0]
+        try:
+            async with asyncio.TaskGroup() as task_group:
+                task_group.create_task(_produce())
+                for _ in range(worker_count):
+                    task_group.create_task(_work())
+        except BaseExceptionGroup as error_group:
+            storage_error = _find_storage_error(error_group)
+            if storage_error is not None:
+                self.logger.error("Benchmark encountered persistence failures")
+                raise storage_error
+            raise
 
-        # Process results: collect valid TestResult objects, log any exceptions
-        for idx, result in enumerate(batch_results):
-            if isinstance(result, Exception):
-                self.logger.error(
-                    f"Attack {idx} execution raised exception: {type(result).__name__}: {str(result)}"
-                )
-            elif isinstance(result, TestResult):
-                results.append(result)
-            elif result is None:
-                self.logger.debug(f"Attack {idx} returned None (expected for fatal errors)")
+        ordered_results = [
+            result for _, result in sorted(results, key=lambda indexed_result: indexed_result[0])
+        ]
 
-        self.logger.info(f"Benchmark completed: {len(results)} results from {len(attacks)} attacks")
-        return results
+        self.logger.info(
+            f"Benchmark completed: {len(ordered_results)} results from {len(attacks)} attacks"
+        )
+        return ordered_results
 
     async def _execute_single_test(
         self,
