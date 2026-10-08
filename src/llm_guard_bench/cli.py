@@ -10,6 +10,7 @@ credentials in this file or any source code.
 import argparse
 import asyncio
 import logging
+import math
 import os
 import subprocess
 import sys
@@ -54,6 +55,7 @@ class LLMGuardBenchOrchestrator:
         categories: list[str] | None = None,
         auto_flush: bool = False,
         attacks_file: str | None = None,
+        evaluation_delay_seconds: float = 1.0,
     ):
         self.target = target
         self.judge = judge
@@ -61,6 +63,7 @@ class LLMGuardBenchOrchestrator:
         self.categories = categories or []
         self.auto_flush = auto_flush
         self.attacks_file = attacks_file
+        self.evaluation_delay_seconds = evaluation_delay_seconds
         self.session_id = self._generate_session_id()
         self.logger = logging.getLogger(f"LLMGuardBench_{self.session_id}")
 
@@ -272,6 +275,7 @@ class LLMGuardBenchOrchestrator:
             target_adapter=self.target_adapter,
             judge_adapter=self.judge_adapter,
             db_manager=self.db_manager,
+            evaluation_delay_seconds=self.evaluation_delay_seconds,
         )
 
         print(f"  Target Model: {self.target}")
@@ -628,6 +632,18 @@ def _positive_int(value: str) -> int:
     return parsed_value
 
 
+def _finite_non_negative_float(value: str) -> float:
+    """Parse a finite, non-negative floating-point argument."""
+    try:
+        parsed_value = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid non-negative number: {value}") from exc
+
+    if not math.isfinite(parsed_value) or parsed_value < 0:
+        raise argparse.ArgumentTypeError("value must be finite and non-negative")
+    return parsed_value
+
+
 def parse_arguments() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
@@ -650,6 +666,13 @@ def parse_arguments() -> argparse.Namespace:
         type=_positive_int,
         default=1,
         help="Maximum concurrent benchmark executions",
+    )
+    parser.add_argument(
+        "--evaluation-delay",
+        dest="evaluation_delay",
+        type=_finite_non_negative_float,
+        default=1.0,
+        help="Per-attack pause in seconds before each judge call; 0 disables it",
     )
     parser.add_argument(
         "--attacks-file",
@@ -693,6 +716,7 @@ async def async_main() -> None:
         categories=args.categories,
         auto_flush=args.auto_flush,
         attacks_file=args.attacks_file,
+        evaluation_delay_seconds=getattr(args, "evaluation_delay", 1.0),
     )
     await orchestrator.orchestrate()
 
