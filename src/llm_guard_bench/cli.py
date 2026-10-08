@@ -530,6 +530,18 @@ class LLMGuardBenchOrchestrator:
                 sys.exit(exit_code)
 
 
+def _positive_int(value: str) -> int:
+    """Parse an integer argument that must be greater than zero."""
+    try:
+        parsed_value = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid positive integer: {value}") from exc
+
+    if parsed_value < 1:
+        raise argparse.ArgumentTypeError(f"value must be at least 1: {value}")
+    return parsed_value
+
+
 def parse_arguments() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
@@ -549,7 +561,7 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument(
         "--concurrency",
-        type=int,
+        type=_positive_int,
         default=1,
         help="Maximum concurrent benchmark executions",
     )

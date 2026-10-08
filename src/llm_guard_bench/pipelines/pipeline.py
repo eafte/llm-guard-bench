@@ -68,6 +68,9 @@ class BenchmarkPipeline:
         Returns:
             List of TestResult objects containing execution and evaluation metrics
         """
+        if concurrency_limit < 1:
+            raise ValueError("concurrency_limit must be at least 1")
+
         semaphore = asyncio.Semaphore(concurrency_limit)
         results: list[TestResult] = []
         tasks = []
