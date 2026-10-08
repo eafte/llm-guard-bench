@@ -8,6 +8,7 @@ persists results to both SQLite and JSONL.
 
 import asyncio
 import logging
+import math
 import time
 from collections.abc import Iterable, Sized
 
@@ -35,6 +36,7 @@ class BenchmarkPipeline:
         target_adapter: BaseAdapter,
         judge_adapter: BaseAdapter,
         db_manager,
+        evaluation_delay_seconds: float = 1.0,
     ) -> None:
         """
         Initialize the benchmark pipeline.
@@ -43,10 +45,15 @@ class BenchmarkPipeline:
             target_adapter: BaseAdapter for target model inference
             judge_adapter: BaseAdapter for evaluation model inference
             db_manager: Database manager for persisting results
+            evaluation_delay_seconds: Per-attack delay before judge evaluation
         """
+        if not math.isfinite(evaluation_delay_seconds) or evaluation_delay_seconds < 0:
+            raise ValueError("evaluation_delay_seconds must be finite and non-negative")
+
         self.target_adapter = target_adapter
         self.judge_adapter = judge_adapter
         self.db_manager = db_manager
+        self.evaluation_delay_seconds = evaluation_delay_seconds
         self.evaluation_engine = EvaluationEngine(judge_adapter=judge_adapter)
         self.logger = logging.getLogger(self.__class__.__name__)
 
@@ -261,8 +268,9 @@ class BenchmarkPipeline:
         # ===== Stage 2: Evaluation Engine (if target succeeded) =====
         if eval_result is None:
             try:
-                # Defensive pacing: Wait 1.0s before Stage 2 to respect Groq free tier RPM limits
-                await asyncio.sleep(1.0)
+                # Apply per-attack pacing before calling the judge.
+                if self.evaluation_delay_seconds > 0:
+                    await asyncio.sleep(self.evaluation_delay_seconds)
 
                 eval_start = time.time()
                 try:
