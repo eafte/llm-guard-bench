@@ -100,6 +100,8 @@ class AttackLoader:
                     if raw_line.endswith(b"\r\n")
                     else (raw_line[:-1] if has_newline else raw_line)
                 )
+                if line_number == 1 and content.startswith(b"\xef\xbb\xbf"):
+                    content = content[3:]
                 if not content.strip():
                     continue
 

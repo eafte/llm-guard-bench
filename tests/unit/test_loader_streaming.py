@@ -217,3 +217,133 @@ def test_load_prompts_rejects_file_over_size_limit_before_parsing(
 
     with pytest.raises(ValueError, match="too large"):
         AttackLoader.load_prompts(str(file_path), max_file_bytes=100)
+
+
+def test_iter_attacks_accepts_exact_limit_and_rejects_one_byte_over_lf(
+    tmp_path: Path,
+) -> None:
+    max_line_bytes = 512
+    exact_attack = _attack("exact", category="DAN")
+    exact_attack["description"] = ""
+    base_size = len(json.dumps(exact_attack).encode("utf-8"))
+    exact_attack["description"] = "x" * (max_line_bytes - base_size)
+    exact_line = json.dumps(exact_attack).encode("utf-8")
+    assert len(exact_line) == max_line_bytes
+
+    oversized_attack = _attack("exact", category="DAN")
+    oversized_attack["description"] = exact_attack["description"] + "x"
+    oversized_line = json.dumps(oversized_attack).encode("utf-8")
+    assert len(oversized_line) == max_line_bytes + 1
+
+    file_path = tmp_path / "boundary-lf.jsonl"
+    file_path.write_bytes(exact_line + b"\n" + oversized_line + b"\n")
+    stats = LoadStats()
+
+    attacks = list(
+        AttackLoader.iter_attacks(
+            str(file_path),
+            max_line_bytes=max_line_bytes,
+            stats=stats,
+        )
+    )
+
+    assert [attack.attack_id for attack in attacks] == ["exact"]
+    assert stats.accepted == 1
+    assert stats.rejected_oversized == 1
+
+
+def test_iter_attacks_accepts_exact_limit_and_rejects_one_byte_over_crlf(
+    tmp_path: Path,
+) -> None:
+    max_line_bytes = 512
+    exact_attack = _attack("exact-crlf")
+    exact_attack["description"] = ""
+    base_size = len(json.dumps(exact_attack).encode("utf-8"))
+    exact_attack["description"] = "x" * (max_line_bytes - base_size)
+    exact_line = json.dumps(exact_attack).encode("utf-8")
+    assert len(exact_line) == max_line_bytes
+
+    oversized_attack = _attack("exact-crlf")
+    oversized_attack["description"] = exact_attack["description"] + "x"
+    oversized_line = json.dumps(oversized_attack).encode("utf-8")
+    assert len(oversized_line) == max_line_bytes + 1
+
+    file_path = tmp_path / "boundary-crlf.jsonl"
+    file_path.write_bytes(exact_line + b"\r\n" + oversized_line + b"\r\n")
+    stats = LoadStats()
+
+    attacks = list(
+        AttackLoader.iter_attacks(
+            str(file_path),
+            max_line_bytes=max_line_bytes,
+            stats=stats,
+        )
+    )
+
+    assert [attack.attack_id for attack in attacks] == ["exact-crlf"]
+    assert stats.accepted == 1
+    assert stats.rejected_oversized == 1
+
+
+def test_iter_attacks_loads_crlf_separated_attacks_without_rejections(
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "crlf.jsonl"
+    file_path.write_bytes(
+        _json_line(_attack("first"))[:-1] + b"\r\n" + _json_line(_attack("second"))[:-1] + b"\r\n"
+    )
+    stats = LoadStats()
+
+    attacks = list(AttackLoader.iter_attacks(str(file_path), stats=stats))
+
+    assert [attack.attack_id for attack in attacks] == ["first", "second"]
+    assert stats.accepted == 2
+    assert stats.rejected_invalid == 0
+    assert stats.rejected_oversized == 0
+
+
+def test_iter_attacks_strips_bom_at_start_of_file_only(tmp_path: Path) -> None:
+    file_path = tmp_path / "initial-bom.jsonl"
+    file_path.write_bytes(
+        b"\xef\xbb\xbf" + _json_line(_attack("first")) + _json_line(_attack("second"))
+    )
+    stats = LoadStats()
+
+    attacks = list(AttackLoader.iter_attacks(str(file_path), stats=stats))
+
+    assert [attack.attack_id for attack in attacks] == ["first", "second"]
+    assert stats.accepted == 2
+    assert stats.rejected_invalid == 0
+
+
+def test_iter_attacks_rejects_bom_on_later_line(tmp_path: Path) -> None:
+    file_path = tmp_path / "middle-bom.jsonl"
+    file_path.write_bytes(
+        _json_line(_attack("before"))
+        + b"\xef\xbb\xbf"
+        + _json_line(_attack("bom-line"))
+        + _json_line(_attack("after"))
+    )
+    stats = LoadStats()
+
+    attacks = list(AttackLoader.iter_attacks(str(file_path), stats=stats))
+
+    assert [attack.attack_id for attack in attacks] == ["before", "after"]
+    assert stats.accepted == 2
+    assert stats.rejected_invalid == 1
+
+
+@pytest.mark.parametrize("non_object_json", [b'["not", "an", "object"]\n', b"42\n"])
+def test_iter_attacks_records_non_object_json_reason(
+    tmp_path: Path,
+    non_object_json: bytes,
+) -> None:
+    file_path = tmp_path / "non-object.jsonl"
+    file_path.write_bytes(non_object_json)
+    stats = LoadStats()
+
+    attacks = list(AttackLoader.iter_attacks(str(file_path), stats=stats))
+
+    assert attacks == []
+    assert stats.rejected_invalid == 1
+    assert stats.samples[0]["reason"] == "not_an_object"
