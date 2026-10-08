@@ -22,6 +22,7 @@ def _install_startup_stubs(
             concurrency=1,
             categories=None,
             auto_flush=False,
+            attacks_file=None,
         ),
     )
 

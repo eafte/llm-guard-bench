@@ -14,7 +14,9 @@ import os
 import subprocess
 import sys
 import uuid
+from contextlib import nullcontext
 from datetime import UTC, datetime
+from importlib.resources import as_file, files
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -50,12 +52,14 @@ class LLMGuardBenchOrchestrator:
         concurrency: int,
         categories: list[str] | None = None,
         auto_flush: bool = False,
+        attacks_file: str | None = None,
     ):
         self.target = target
         self.judge = judge
         self.concurrency = concurrency
         self.categories = categories or []
         self.auto_flush = auto_flush
+        self.attacks_file = attacks_file
         self.session_id = self._generate_session_id()
         self.logger = logging.getLogger(f"LLMGuardBench_{self.session_id}")
 
@@ -125,18 +129,22 @@ class LLMGuardBenchOrchestrator:
         self.logger.info("Database initialized and migrations completed.")
 
     async def load_attack_definitions(self) -> list[AttackDefinition]:
-        """Load attack definitions from config/prompts.json."""
+        """Load attack definitions from the selected or packaged prompts file."""
         self._log_section("Loading Attack Definitions")
-        prompts_path = Path("config/prompts.json")
-
-        if not prompts_path.exists():
-            self.logger.error(f"Attacks file not found at: {prompts_path}")
-            raise FileNotFoundError(f"Attacks file not found: {prompts_path}")
-
-        # Load attacks using the AttackLoader
-        attacks = AttackLoader.load_prompts(
-            str(prompts_path), self.categories if self.categories else None
+        prompts_file = (
+            nullcontext(Path(self.attacks_file))
+            if self.attacks_file is not None
+            else as_file(files("llm_guard_bench") / "resources" / "prompts.json")
         )
+
+        with prompts_file as prompts_path:
+            if not prompts_path.exists():
+                self.logger.error(f"Attacks file not found at: {prompts_path}")
+                raise FileNotFoundError(f"Attacks file not found: {prompts_path}")
+
+            attacks = AttackLoader.load_prompts(
+                str(prompts_path), self.categories if self.categories else None
+            )
         print(f"✓ Loaded {len(attacks)} attack definitions successfully.")
         return attacks
 
@@ -566,6 +574,13 @@ def parse_arguments() -> argparse.Namespace:
         help="Maximum concurrent benchmark executions",
     )
     parser.add_argument(
+        "--attacks-file",
+        dest="attacks_file",
+        type=str,
+        default=None,
+        help="path to the attack definitions file; default is the packaged resources/prompts.json",
+    )
+    parser.add_argument(
         "--categories",
         type=str,
         nargs="+",
@@ -599,6 +614,7 @@ async def async_main() -> None:
         concurrency=args.concurrency,
         categories=args.categories,
         auto_flush=args.auto_flush,
+        attacks_file=args.attacks_file,
     )
     await orchestrator.orchestrate()
 
