@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -237,3 +238,61 @@ class AttackLoader:
         )
 
         return attack_definitions
+
+
+class AttackSourceChangedError(RuntimeError):
+    """Raised when a JSONL source drifts between passes; this is not an integrity proof."""
+
+
+class JsonlAttackSource:
+    """Re-iterable JSONL source with a metadata/count drift guard, not an integrity proof."""
+
+    def __init__(
+        self,
+        file_path: str,
+        categories: list[str] | None = None,
+        *,
+        max_line_bytes: int = 1_048_576,
+    ) -> None:
+        self._file_path = file_path
+        self._categories = categories
+        self._max_line_bytes = max_line_bytes
+        self._baseline_signature: tuple[int, int] | None = None
+        self.count: int | None = None
+        self.last_stats: LoadStats | None = None
+
+    def __iter__(self) -> Iterator[AttackDefinition]:
+        """Yield one lazy pass with a drift guard, not an integrity proof."""
+        file_stat = os.stat(self._file_path)
+        signature = (file_stat.st_size, file_stat.st_mtime_ns)
+        if self.count is None:
+            self._baseline_signature = signature
+        elif signature != self._baseline_signature:
+            raise AttackSourceChangedError("Attack source changed between passes")
+
+        stats = LoadStats()
+        self.last_stats = stats
+        attack_iterator = iter(
+            AttackLoader.iter_attacks(
+                self._file_path,
+                self._categories,
+                max_line_bytes=self._max_line_bytes,
+                stats=stats,
+            )
+        )
+        try:
+            while True:
+                try:
+                    attack = next(attack_iterator)
+                except StopIteration:
+                    break
+                yield attack
+        finally:
+            close = getattr(attack_iterator, "close", None)
+            if callable(close):
+                close()
+
+        if self.count is None:
+            self.count = stats.accepted
+        elif stats.accepted != self.count:
+            raise AttackSourceChangedError("Attack source count changed between passes")
