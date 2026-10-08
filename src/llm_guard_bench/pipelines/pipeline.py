@@ -9,6 +9,7 @@ persists results to both SQLite and JSONL.
 import asyncio
 import logging
 import time
+from collections.abc import Iterable, Sized
 
 from llm_guard_bench.domain.models import (
     AttackContext,
@@ -51,7 +52,7 @@ class BenchmarkPipeline:
 
     async def run_benchmark(
         self,
-        attacks: list[AttackDefinition],
+        attacks: Iterable[AttackDefinition],
         model_name: str,
         concurrency_limit: int,
         session_id: str,
@@ -71,20 +72,33 @@ class BenchmarkPipeline:
         if concurrency_limit < 1:
             raise ValueError("concurrency_limit must be at least 1")
 
-        if not attacks:
-            return []
+        if isinstance(attacks, Sized):
+            attack_count = len(attacks)
+            if attack_count == 0:
+                return []
+            worker_count = min(concurrency_limit, attack_count)
+        else:
+            worker_count = concurrency_limit
 
-        worker_count = min(concurrency_limit, len(attacks))
         queue: asyncio.Queue[tuple[int, AttackDefinition] | None] = asyncio.Queue(
             maxsize=2 * worker_count
         )
         results: list[tuple[int, TestResult]] = []
+        pulled_count = 0
 
         async def _produce() -> None:
-            for index, attack in enumerate(attacks):
-                await queue.put((index, attack))
-            for _ in range(worker_count):
-                await queue.put(None)
+            nonlocal pulled_count
+            iterator = iter(attacks)
+            try:
+                for index, attack in enumerate(iterator):
+                    pulled_count += 1
+                    await queue.put((index, attack))
+                for _ in range(worker_count):
+                    await queue.put(None)
+            finally:
+                close = getattr(iterator, "close", None)
+                if callable(close):
+                    close()
 
         async def _work() -> None:
             while True:
@@ -142,7 +156,7 @@ class BenchmarkPipeline:
         ]
 
         self.logger.info(
-            f"Benchmark completed: {len(ordered_results)} results from {len(attacks)} attacks"
+            f"Benchmark completed: {len(ordered_results)} results from {pulled_count} attacks"
         )
         return ordered_results
 
