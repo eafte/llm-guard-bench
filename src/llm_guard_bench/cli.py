@@ -10,11 +10,15 @@ credentials in this file or any source code.
 import argparse
 import asyncio
 import logging
+import math
 import os
 import subprocess
 import sys
 import uuid
+from collections.abc import Iterable
+from contextlib import nullcontext
 from datetime import UTC, datetime
+from importlib.resources import as_file, files
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -24,13 +28,22 @@ load_dotenv()
 
 # Core module imports - absolute paths per architectural constraints
 from llm_guard_bench.domain.models import AttackDefinition, SessionSummary
-from llm_guard_bench.pipelines.pipeline import BenchmarkPipeline
+from llm_guard_bench.pipelines.pipeline import BenchmarkPipeline, BenchmarkSummary
 from llm_guard_bench.providers.adapters import GroqAdapter, get_adapter
 from llm_guard_bench.reporting.aggregator import ResultsAggregator
 from llm_guard_bench.reporting.metrics import format_percent, resistance_tier
 from llm_guard_bench.settings import RESULTS_DIR, validate_configuration
 from llm_guard_bench.storage.db import DatabaseManager
-from llm_guard_bench.streaming_io.loader import AttackLoader
+from llm_guard_bench.streaming_io.loader import AttackLoader, JsonlAttackSource
+
+
+def _has_no_verdict(summary: BenchmarkSummary) -> bool:
+    """Return whether pulled attacks produced no verdict-bearing status."""
+    verdict_count = sum(
+        summary.status_counts.get(status, 0) for status in ("PASSED", "VULNERABLE", "AMBIGUOUS")
+    )
+    return summary.attacks_pulled > 0 and verdict_count == 0
+
 
 # Standard production logger configuration
 logging.basicConfig(
@@ -50,12 +63,16 @@ class LLMGuardBenchOrchestrator:
         concurrency: int,
         categories: list[str] | None = None,
         auto_flush: bool = False,
+        attacks_file: str | None = None,
+        evaluation_delay_seconds: float = 1.0,
     ):
         self.target = target
         self.judge = judge
         self.concurrency = concurrency
         self.categories = categories or []
         self.auto_flush = auto_flush
+        self.attacks_file = attacks_file
+        self.evaluation_delay_seconds = evaluation_delay_seconds
         self.session_id = self._generate_session_id()
         self.logger = logging.getLogger(f"LLMGuardBench_{self.session_id}")
 
@@ -124,24 +141,43 @@ class LLMGuardBenchOrchestrator:
         await self.db_manager.run_migrations()
         self.logger.info("Database initialized and migrations completed.")
 
-    async def load_attack_definitions(self) -> list[AttackDefinition]:
-        """Load attack definitions from config/prompts.json."""
+    async def load_attack_definitions(
+        self,
+    ) -> list[AttackDefinition] | JsonlAttackSource:
+        """Load attack definitions from the selected or packaged prompts file."""
         self._log_section("Loading Attack Definitions")
-        prompts_path = Path("config/prompts.json")
+        if self.attacks_file is not None:
+            attacks_path = Path(self.attacks_file)
+            if not attacks_path.exists():
+                self.logger.error(f"Attacks file not found at: {attacks_path}")
+                raise FileNotFoundError(f"Attacks file not found: {attacks_path}")
+            if attacks_path.suffix.lower() == ".jsonl":
+                source = JsonlAttackSource(
+                    str(attacks_path),
+                    self.categories if self.categories else None,
+                )
+                print(f"streaming attacks from {attacks_path}")
+                return source
 
-        if not prompts_path.exists():
-            self.logger.error(f"Attacks file not found at: {prompts_path}")
-            raise FileNotFoundError(f"Attacks file not found: {prompts_path}")
-
-        # Load attacks using the AttackLoader
-        attacks = AttackLoader.load_prompts(
-            str(prompts_path), self.categories if self.categories else None
+        prompts_file = (
+            nullcontext(Path(self.attacks_file))
+            if self.attacks_file is not None
+            else as_file(files("llm_guard_bench") / "resources" / "prompts.json")
         )
+
+        with prompts_file as prompts_path:
+            if not prompts_path.exists():
+                self.logger.error(f"Attacks file not found at: {prompts_path}")
+                raise FileNotFoundError(f"Attacks file not found: {prompts_path}")
+
+            attacks = AttackLoader.load_prompts(
+                str(prompts_path), self.categories if self.categories else None
+            )
         print(f"✓ Loaded {len(attacks)} attack definitions successfully.")
         return attacks
 
-    async def register_session(self, attacks: list[AttackDefinition]) -> None:
-        """Persist the session and its attack definitions before benchmarking."""
+    async def _register_session_row(self) -> None:
+        """Persist the current session row."""
         if self.db_manager is None:
             raise RuntimeError("Database manager is not initialized.")
 
@@ -156,8 +192,50 @@ class LLMGuardBenchOrchestrator:
             },
         )
         await self.db_manager.upsert_session(summary)
+
+    async def register_session(self, attacks: list[AttackDefinition]) -> None:
+        """Persist the session and its attack definitions before benchmarking."""
+        await self._register_session_row()
+        if self.db_manager is None:
+            raise RuntimeError("Database manager is not initialized.")
+
         for attack in attacks:
             await self.db_manager.upsert_attack_definition(attack)
+
+    async def register_streaming_source(self, attacks: Iterable[AttackDefinition]) -> int:
+        """Register attacks as they are yielded, without materializing the source."""
+        if self.db_manager is None:
+            raise RuntimeError("Database manager is not initialized.")
+
+        await self._register_session_row()
+        iterator = iter(attacks)
+        registered_count = 0
+        try:
+            for attack in iterator:
+                await self.db_manager.upsert_attack_definition(attack)
+                registered_count += 1
+        finally:
+            close = getattr(iterator, "close", None)
+            if callable(close):
+                close()
+
+        stats = getattr(attacks, "last_stats", None)
+        rejected_by_reason = getattr(stats, "rejected_by_reason", None)
+        if stats is not None and rejected_by_reason:
+            rejected_count = getattr(stats, "rejected_invalid", 0) + getattr(
+                stats, "rejected_oversized", 0
+            )
+            reasons = ", ".join(
+                f"{reason}={count}" for reason, count in sorted(rejected_by_reason.items())
+            )
+            self.logger.warning(
+                "JSONL load: accepted %s, rejected %s (%s)",
+                getattr(stats, "accepted", registered_count),
+                rejected_count,
+                reasons,
+            )
+
+        return registered_count
 
     async def finalize_session(self) -> None:
         """Finalize this session's persisted results and counts."""
@@ -195,7 +273,10 @@ class LLMGuardBenchOrchestrator:
         print(f"✓ Target adapter initialized: {self.target_adapter.__class__.__name__}")
         print(f"✓ Judge adapter initialized: {self.judge_adapter.__class__.__name__}")
 
-    async def run_benchmark(self, attacks: list[AttackDefinition]) -> list:
+    async def run_benchmark(
+        self,
+        attacks: list[AttackDefinition] | JsonlAttackSource,
+    ) -> BenchmarkSummary:
         """Execute the benchmark pipeline with comprehensive logging."""
         self._log_section("Running Concurrent Benchmark Evaluation")
 
@@ -203,37 +284,51 @@ class LLMGuardBenchOrchestrator:
             target_adapter=self.target_adapter,
             judge_adapter=self.judge_adapter,
             db_manager=self.db_manager,
+            evaluation_delay_seconds=self.evaluation_delay_seconds,
         )
 
         print(f"  Target Model: {self.target}")
         print(f"  Judge Model: {self.judge}")
         print(f"  Concurrency Level: {self.concurrency}")
-        print(f"  Total Attack Vectors: {len(attacks)}\n")
+        if isinstance(attacks, JsonlAttackSource):
+            attack_count = attacks.count if attacks.count is not None else "unknown"
+        else:
+            attack_count = len(attacks)
+        print(f"  Total Attack Vectors: {attack_count}\n")
 
         try:
-            results = await self.benchmark_pipeline.run_benchmark(
+            summary = await self.benchmark_pipeline.run_benchmark_summary(
                 attacks=attacks,
                 model_name=self.target,
                 concurrency_limit=self.concurrency,
                 session_id=self.session_id,
             )
 
-            print(f"✓ Benchmark execution completed: {len(results)} results generated")
-            print(f"  - Results: {len([r for r in results if r])} non-null")
-
-            # Log result breakdown
-            status_breakdown: dict[str, int] = {}
-            for result in results:
-                if result:
-                    status = result.evaluation_status
-                    status_breakdown[status] = status_breakdown.get(status, 0) + 1
+            print(f"✓ Benchmark execution completed: {summary.results_written} results written")
+            error_label = "error" if summary.errors == 1 else "errors"
+            print(f"  - Errors: {summary.errors} {error_label}")
 
             print("\n  Result Breakdown:")
-            for status_name, count in sorted(status_breakdown.items()):
+            for status_name, count in sorted(summary.status_counts.items()):
                 print(f"    - {status_name}: {count}")
 
-            self.logger.info(f"Benchmark completed with {len(results)} results")
-            return results
+            if _has_no_verdict(summary):
+                print(
+                    "\n✗ No attack reached a verdict "
+                    f"({summary.results_written} results with non-verdict status)"
+                )
+                self.logger.warning(
+                    "No attack reached a verdict: %s results with non-verdict status",
+                    summary.results_written,
+                )
+
+            self.logger.info(
+                "Benchmark completed: %s results written, %s errors, %s attacks pulled",
+                summary.results_written,
+                summary.errors,
+                summary.attacks_pulled,
+            )
+            return summary
 
         except Exception as e:
             self.logger.error(f"Benchmark pipeline execution failed: {str(e)}")
@@ -425,13 +520,18 @@ class LLMGuardBenchOrchestrator:
             try:
                 self.logger.debug("Stage 3: Loading attack definitions...")
                 attacks = await self.load_attack_definitions()
-                self.logger.info(f"✓ Stage 3 Complete: Loaded {len(attacks)} attack definitions")
+                if isinstance(attacks, JsonlAttackSource):
+                    self.logger.info("✓ Stage 3 Complete: streaming attack source ready")
+                else:
+                    self.logger.info(
+                        f"✓ Stage 3 Complete: Loaded {len(attacks)} attack definitions"
+                    )
 
-                if not attacks:
-                    self.logger.warning("No attack vectors loaded. Exiting pipeline.")
-                    print("\n✗ No attack vectors available")
-                    exit_code = 1
-                    return
+                    if not attacks:
+                        self.logger.warning("No attack vectors loaded. Exiting pipeline.")
+                        print("\n✗ No attack vectors available")
+                        exit_code = 1
+                        return
             except Exception as e:
                 self.logger.error(f"Stage 3 FAILED: {type(e).__name__}: {str(e)}", exc_info=True)
                 print(f"\n✗ Attack loading failed: {str(e)}")
@@ -441,7 +541,15 @@ class LLMGuardBenchOrchestrator:
             # Stage 3.5: Register session and attack definitions
             try:
                 self.logger.debug("Stage 3.5: Registering session and attack definitions...")
-                await self.register_session(attacks)
+                if isinstance(attacks, JsonlAttackSource):
+                    registered = await self.register_streaming_source(attacks)
+                    if registered == 0:
+                        self.logger.warning("No attack vectors loaded. Exiting pipeline.")
+                        print("\n✗ No attack vectors available")
+                        exit_code = 1
+                        return
+                else:
+                    await self.register_session(attacks)
                 self.logger.info("✓ Stage 3.5 Complete: Session and attacks registered")
             except Exception as e:
                 self.logger.error(f"Stage 3.5 FAILED: {type(e).__name__}: {str(e)}", exc_info=True)
@@ -463,7 +571,9 @@ class LLMGuardBenchOrchestrator:
             # Stage 5: Run Benchmark (may have partial failures - continue anyway)
             try:
                 self.logger.debug("Stage 5: Running benchmark pipeline...")
-                await self.run_benchmark(attacks)
+                summary = await self.run_benchmark(attacks)
+                if isinstance(summary, BenchmarkSummary) and _has_no_verdict(summary):
+                    exit_code = 1
                 self.logger.info("✓ Stage 5 Complete: Benchmark execution finished")
             except Exception as e:
                 self.logger.error(f"Stage 5 WARNING: {type(e).__name__}: {str(e)}", exc_info=True)
@@ -530,6 +640,30 @@ class LLMGuardBenchOrchestrator:
                 sys.exit(exit_code)
 
 
+def _positive_int(value: str) -> int:
+    """Parse an integer argument that must be greater than zero."""
+    try:
+        parsed_value = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid positive integer: {value}") from exc
+
+    if parsed_value < 1:
+        raise argparse.ArgumentTypeError(f"value must be at least 1: {value}")
+    return parsed_value
+
+
+def _finite_non_negative_float(value: str) -> float:
+    """Parse a finite, non-negative floating-point argument."""
+    try:
+        parsed_value = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid non-negative number: {value}") from exc
+
+    if not math.isfinite(parsed_value) or parsed_value < 0:
+        raise argparse.ArgumentTypeError("value must be finite and non-negative")
+    return parsed_value
+
+
 def parse_arguments() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
@@ -549,9 +683,23 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument(
         "--concurrency",
-        type=int,
+        type=_positive_int,
         default=1,
         help="Maximum concurrent benchmark executions",
+    )
+    parser.add_argument(
+        "--evaluation-delay",
+        dest="evaluation_delay",
+        type=_finite_non_negative_float,
+        default=1.0,
+        help="Per-attack pause in seconds before each judge call; 0 disables it",
+    )
+    parser.add_argument(
+        "--attacks-file",
+        dest="attacks_file",
+        type=str,
+        default=None,
+        help="path to the attack definitions file; default is the packaged resources/prompts.json",
     )
     parser.add_argument(
         "--categories",
@@ -587,12 +735,23 @@ async def async_main() -> None:
         concurrency=args.concurrency,
         categories=args.categories,
         auto_flush=args.auto_flush,
+        attacks_file=args.attacks_file,
+        evaluation_delay_seconds=getattr(args, "evaluation_delay", 1.0),
     )
     await orchestrator.orchestrate()
 
 
+def configure_console_streams() -> None:
+    """Replace characters unsupported by the current stdout and stderr encodings."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(errors="replace")
+
+
 def main() -> None:
     """Console-script entry point: run the async orchestration to completion."""
+    configure_console_streams()
     asyncio.run(async_main())
 
 

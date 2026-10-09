@@ -8,7 +8,10 @@ persists results to both SQLite and JSONL.
 
 import asyncio
 import logging
+import math
 import time
+from collections.abc import Callable, Iterable, Mapping, Sized
+from dataclasses import dataclass
 
 from llm_guard_bench.domain.models import (
     AttackContext,
@@ -23,6 +26,16 @@ from llm_guard_bench.storage.errors import StorageError
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class BenchmarkSummary:
+    """Bounded aggregate counts from a benchmark run."""
+
+    attacks_pulled: int
+    results_written: int
+    errors: int
+    status_counts: Mapping[str, int]
+
+
 class BenchmarkPipeline:
     """
     Production-ready async benchmark pipeline for executing attacks against target and judge adapters.
@@ -34,6 +47,7 @@ class BenchmarkPipeline:
         target_adapter: BaseAdapter,
         judge_adapter: BaseAdapter,
         db_manager,
+        evaluation_delay_seconds: float = 1.0,
     ) -> None:
         """
         Initialize the benchmark pipeline.
@@ -42,16 +56,21 @@ class BenchmarkPipeline:
             target_adapter: BaseAdapter for target model inference
             judge_adapter: BaseAdapter for evaluation model inference
             db_manager: Database manager for persisting results
+            evaluation_delay_seconds: Per-attack delay before judge evaluation
         """
+        if not math.isfinite(evaluation_delay_seconds) or evaluation_delay_seconds < 0:
+            raise ValueError("evaluation_delay_seconds must be finite and non-negative")
+
         self.target_adapter = target_adapter
         self.judge_adapter = judge_adapter
         self.db_manager = db_manager
+        self.evaluation_delay_seconds = evaluation_delay_seconds
         self.evaluation_engine = EvaluationEngine(judge_adapter=judge_adapter)
         self.logger = logging.getLogger(self.__class__.__name__)
 
     async def run_benchmark(
         self,
-        attacks: list[AttackDefinition],
+        attacks: Iterable[AttackDefinition],
         model_name: str,
         concurrency_limit: int,
         session_id: str,
@@ -68,57 +87,173 @@ class BenchmarkPipeline:
         Returns:
             List of TestResult objects containing execution and evaluation metrics
         """
-        semaphore = asyncio.Semaphore(concurrency_limit)
-        results: list[TestResult] = []
-        tasks = []
+        results: list[tuple[int, TestResult]] = []
+        pulled_count = await self._run_benchmark_workers(
+            attacks=attacks,
+            model_name=model_name,
+            concurrency_limit=concurrency_limit,
+            session_id=session_id,
+            on_result=lambda index, result: results.append((index, result)),
+            on_error=lambda: None,
+        )
+        if pulled_count is None:
+            return []
 
-        async def _bounded_execute(attack: AttackDefinition, index: int) -> TestResult | None:
-            """Execute single test within semaphore bounds with defensive error handling."""
+        ordered_results = [
+            result for _, result in sorted(results, key=lambda indexed_result: indexed_result[0])
+        ]
+
+        self.logger.info(
+            f"Benchmark completed: {len(ordered_results)} results from {pulled_count} attacks"
+        )
+        return ordered_results
+
+    async def run_benchmark_summary(
+        self,
+        attacks: Iterable[AttackDefinition],
+        model_name: str,
+        concurrency_limit: int,
+        session_id: str,
+    ) -> BenchmarkSummary:
+        """Run a benchmark while retaining only bounded result counts."""
+        status_counts: dict[str, int] = {}
+        results_written = 0
+        errors = 0
+
+        def record_result(_index: int, result: TestResult) -> None:
+            nonlocal results_written
+            results_written += 1
+            status = result.evaluation_status
+            status_counts[status] = status_counts.get(status, 0) + 1
+
+        def record_error() -> None:
+            nonlocal errors
+            errors += 1
+
+        pulled_count = await self._run_benchmark_workers(
+            attacks=attacks,
+            model_name=model_name,
+            concurrency_limit=concurrency_limit,
+            session_id=session_id,
+            on_result=record_result,
+            on_error=record_error,
+        )
+        if pulled_count is None:
+            pulled_count = 0
+
+        self.logger.info(
+            "Benchmark summary completed: %s results from %s attacks (%s errors)",
+            results_written,
+            pulled_count,
+            errors,
+        )
+        return BenchmarkSummary(
+            attacks_pulled=pulled_count,
+            results_written=results_written,
+            errors=errors,
+            status_counts=status_counts,
+        )
+
+    async def _run_benchmark_workers(
+        self,
+        attacks: Iterable[AttackDefinition],
+        model_name: str,
+        concurrency_limit: int,
+        session_id: str,
+        on_result: Callable[[int, TestResult], None],
+        on_error: Callable[[], None],
+    ) -> int | None:
+        """Execute attacks with bounded workers and report outcomes through callbacks."""
+        if concurrency_limit < 1:
+            raise ValueError("concurrency_limit must be at least 1")
+
+        if isinstance(attacks, Sized):
+            attack_count = len(attacks)
+            if attack_count == 0:
+                return None
+            worker_count = min(concurrency_limit, attack_count)
+        else:
+            worker_count = concurrency_limit
+
+        queue: asyncio.Queue[tuple[int, AttackDefinition] | None] = asyncio.Queue(
+            maxsize=2 * worker_count
+        )
+        pulled_count = 0
+
+        async def _produce() -> None:
+            nonlocal pulled_count
+            iterator = iter(attacks)
             try:
-                async with semaphore:
-                    return await self._execute_single_test(
+                for index, attack in enumerate(iterator):
+                    pulled_count += 1
+                    await queue.put((index, attack))
+                for _ in range(worker_count):
+                    await queue.put(None)
+            finally:
+                close = getattr(iterator, "close", None)
+                if callable(close):
+                    close()
+
+        async def _work() -> None:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    return
+
+                index, attack = item
+                try:
+                    result = await self._execute_single_test(
                         attack=attack,
                         model_name=model_name,
                         attack_index=index,
                         session_id=session_id,
                     )
-            except StorageError:
-                raise
-            except Exception as e:
-                # This should never happen due to try-except in _execute_single_test,
-                # but we catch any unforeseen exceptions to prevent batch failure
-                self.logger.error(
-                    f"Attack {index} ({attack.attack_id}) unhandled exception in _bounded_execute: {type(e).__name__}: {str(e)}"
-                )
-                # Return None to signal fatal error (will be logged above)
-                return None
+                except StorageError:
+                    raise
+                except Exception as exc:
+                    self.logger.error(
+                        "Attack %s (%s) unhandled exception in worker: %s: %s",
+                        index,
+                        attack.attack_id,
+                        type(exc).__name__,
+                        exc,
+                    )
+                    on_error()
+                    continue
 
-        # Create all tasks with concurrency control
-        for idx, attack in enumerate(attacks):
-            task = _bounded_execute(attack, idx)
-            tasks.append(task)
+                if isinstance(result, TestResult):
+                    on_result(index, result)
+                else:
+                    self.logger.warning(
+                        "Attack %s (index %s) produced no TestResult",
+                        attack.attack_id,
+                        index,
+                    )
+                    on_error()
 
-        # Execute all tasks with exception handling to prevent batch failure
-        batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+        def _find_storage_error(error: BaseException) -> StorageError | None:
+            if isinstance(error, StorageError):
+                return error
+            if isinstance(error, BaseExceptionGroup):
+                for nested_error in error.exceptions:
+                    storage_error = _find_storage_error(nested_error)
+                    if storage_error is not None:
+                        return storage_error
+            return None
 
-        storage_errors = [result for result in batch_results if isinstance(result, StorageError)]
-        if storage_errors:
-            self.logger.error("Benchmark encountered %s persistence failures", len(storage_errors))
-            raise storage_errors[0]
+        try:
+            async with asyncio.TaskGroup() as task_group:
+                task_group.create_task(_produce())
+                for _ in range(worker_count):
+                    task_group.create_task(_work())
+        except BaseExceptionGroup as error_group:
+            storage_error = _find_storage_error(error_group)
+            if storage_error is not None:
+                self.logger.error("Benchmark encountered persistence failures")
+                raise storage_error
+            raise
 
-        # Process results: collect valid TestResult objects, log any exceptions
-        for idx, result in enumerate(batch_results):
-            if isinstance(result, Exception):
-                self.logger.error(
-                    f"Attack {idx} execution raised exception: {type(result).__name__}: {str(result)}"
-                )
-            elif isinstance(result, TestResult):
-                results.append(result)
-            elif result is None:
-                self.logger.debug(f"Attack {idx} returned None (expected for fatal errors)")
-
-        self.logger.info(f"Benchmark completed: {len(results)} results from {len(attacks)} attacks")
-        return results
+        return pulled_count
 
     async def _execute_single_test(
         self,
@@ -127,7 +262,7 @@ class BenchmarkPipeline:
         attack_index: int,
         session_id: str,
         timeout_seconds: float = 180.0,
-    ) -> TestResult | None:
+    ) -> TestResult:
         """
         Execute a single benchmark test with full instrumentation and error handling.
 
@@ -221,8 +356,9 @@ class BenchmarkPipeline:
         # ===== Stage 2: Evaluation Engine (if target succeeded) =====
         if eval_result is None:
             try:
-                # Defensive pacing: Wait 1.0s before Stage 2 to respect Groq free tier RPM limits
-                await asyncio.sleep(1.0)
+                # Apply per-attack pacing before calling the judge.
+                if self.evaluation_delay_seconds > 0:
+                    await asyncio.sleep(self.evaluation_delay_seconds)
 
                 eval_start = time.time()
                 try:

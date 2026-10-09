@@ -151,7 +151,7 @@ async def test_cli_run_benchmark_propagates_storage_error(
         def __init__(self, **_kwargs: object) -> None:
             pass
 
-        async def run_benchmark(self, **_kwargs: object) -> list[PipelineTestResult]:
+        async def run_benchmark_summary(self, **_kwargs: object) -> list[PipelineTestResult]:
             raise StorageError("x")
 
     monkeypatch.setattr(cli, "BenchmarkPipeline", FakePipeline)
@@ -176,7 +176,7 @@ async def test_cli_run_benchmark_propagates_other_pipeline_errors(
         def __init__(self, **_kwargs: object) -> None:
             pass
 
-        async def run_benchmark(self, **_kwargs: object) -> list[PipelineTestResult]:
+        async def run_benchmark_summary(self, **_kwargs: object) -> list[PipelineTestResult]:
             raise RuntimeError("boom")
 
     monkeypatch.setattr(cli, "BenchmarkPipeline", FakePipeline)

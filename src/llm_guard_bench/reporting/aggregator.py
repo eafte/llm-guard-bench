@@ -12,6 +12,7 @@ import logging
 import sqlite3
 from collections import Counter, defaultdict
 from datetime import datetime
+from importlib.resources import files
 from pathlib import Path
 
 import matplotlib
@@ -486,11 +487,10 @@ class ResultsAggregator:
         return dict(category_data)
 
     def _load_configured_categories(self) -> list[str]:
-        """Load every attack category declared in config/prompts.json."""
-        config_path = Path(__file__).resolve().parent.parent / "config" / "prompts.json"
+        """Load every attack category declared in the packaged prompts resource."""
+        resource = files("llm_guard_bench").joinpath("resources", "prompts.json")
         try:
-            with open(config_path, encoding="utf-8") as config_file:
-                config = json.load(config_file)
+            config = json.loads(resource.read_text(encoding="utf-8"))
 
             return sorted(
                 {
@@ -500,7 +500,10 @@ class ResultsAggregator:
                 }
             )
         except (OSError, json.JSONDecodeError, AttributeError) as exc:
-            logger.warning(f"Unable to load configured attack categories from {config_path}: {exc}")
+            logger.warning(
+                f"Unable to load configured attack categories from "
+                f"llm_guard_bench/resources/prompts.json: {exc}"
+            )
             return []
 
     def _extract_performance_data(self, results: list[dict]) -> list[tuple[str, float]]:
