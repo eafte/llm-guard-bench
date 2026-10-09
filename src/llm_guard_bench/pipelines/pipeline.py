@@ -223,6 +223,13 @@ class BenchmarkPipeline:
 
                 if isinstance(result, TestResult):
                     on_result(index, result)
+                else:
+                    self.logger.warning(
+                        "Attack %s (index %s) produced no TestResult",
+                        attack.attack_id,
+                        index,
+                    )
+                    on_error()
 
         def _find_storage_error(error: BaseException) -> StorageError | None:
             if isinstance(error, StorageError):
@@ -255,7 +262,7 @@ class BenchmarkPipeline:
         attack_index: int,
         session_id: str,
         timeout_seconds: float = 180.0,
-    ) -> TestResult | None:
+    ) -> TestResult:
         """
         Execute a single benchmark test with full instrumentation and error handling.
 

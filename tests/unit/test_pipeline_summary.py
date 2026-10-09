@@ -167,6 +167,39 @@ async def test_summary_counts_worker_errors_without_counting_them_as_written(
     assert summary.attacks_pulled == summary.results_written + summary.errors
 
 
+async def test_summary_counts_none_result_as_worker_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_manager = FakeDB()
+    pipeline = _make_pipeline(monkeypatch, db_manager)
+    execute_single_test = pipeline._execute_single_test
+
+    async def return_none_for_one_attack(
+        attack: AttackDefinition,
+        model_name: str,
+        attack_index: int,
+        session_id: str,
+        timeout_seconds: float = 180.0,
+    ) -> PipelineTestResult | None:
+        if attack.attack_id == "attack-2":
+            return None
+        return await execute_single_test(
+            attack=attack,
+            model_name=model_name,
+            attack_index=attack_index,
+            session_id=session_id,
+            timeout_seconds=timeout_seconds,
+        )
+
+    monkeypatch.setattr(pipeline, "_execute_single_test", return_none_for_one_attack)
+
+    summary = await _run_summary(pipeline, _make_attacks(5))
+
+    assert summary.errors == 1
+    assert summary.results_written == 4
+    assert summary.attacks_pulled == summary.results_written + summary.errors
+
+
 async def test_summary_propagates_storage_error_as_plain_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
