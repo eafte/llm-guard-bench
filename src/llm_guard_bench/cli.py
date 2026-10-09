@@ -28,7 +28,7 @@ load_dotenv()
 
 # Core module imports - absolute paths per architectural constraints
 from llm_guard_bench.domain.models import AttackDefinition, SessionSummary
-from llm_guard_bench.pipelines.pipeline import BenchmarkPipeline
+from llm_guard_bench.pipelines.pipeline import BenchmarkPipeline, BenchmarkSummary
 from llm_guard_bench.providers.adapters import GroqAdapter, get_adapter
 from llm_guard_bench.reporting.aggregator import ResultsAggregator
 from llm_guard_bench.reporting.metrics import format_percent, resistance_tier
@@ -267,7 +267,7 @@ class LLMGuardBenchOrchestrator:
     async def run_benchmark(
         self,
         attacks: list[AttackDefinition] | JsonlAttackSource,
-    ) -> list:
+    ) -> BenchmarkSummary:
         """Execute the benchmark pipeline with comprehensive logging."""
         self._log_section("Running Concurrent Benchmark Evaluation")
 
@@ -288,29 +288,28 @@ class LLMGuardBenchOrchestrator:
         print(f"  Total Attack Vectors: {attack_count}\n")
 
         try:
-            results = await self.benchmark_pipeline.run_benchmark(
+            summary = await self.benchmark_pipeline.run_benchmark_summary(
                 attacks=attacks,
                 model_name=self.target,
                 concurrency_limit=self.concurrency,
                 session_id=self.session_id,
             )
 
-            print(f"✓ Benchmark execution completed: {len(results)} results generated")
-            print(f"  - Results: {len([r for r in results if r])} non-null")
-
-            # Log result breakdown
-            status_breakdown: dict[str, int] = {}
-            for result in results:
-                if result:
-                    status = result.evaluation_status
-                    status_breakdown[status] = status_breakdown.get(status, 0) + 1
+            print(f"✓ Benchmark execution completed: {summary.results_written} results written")
+            error_label = "error" if summary.errors == 1 else "errors"
+            print(f"  - Errors: {summary.errors} {error_label}")
 
             print("\n  Result Breakdown:")
-            for status_name, count in sorted(status_breakdown.items()):
+            for status_name, count in sorted(summary.status_counts.items()):
                 print(f"    - {status_name}: {count}")
 
-            self.logger.info(f"Benchmark completed with {len(results)} results")
-            return results
+            self.logger.info(
+                "Benchmark completed: %s results written, %s errors, %s attacks pulled",
+                summary.results_written,
+                summary.errors,
+                summary.attacks_pulled,
+            )
+            return summary
 
         except Exception as e:
             self.logger.error(f"Benchmark pipeline execution failed: {str(e)}")

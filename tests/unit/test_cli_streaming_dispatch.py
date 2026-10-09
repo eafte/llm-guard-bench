@@ -9,6 +9,7 @@ import pytest
 
 from llm_guard_bench import cli
 from llm_guard_bench.domain.models import AttackDefinition, SessionSummary
+from llm_guard_bench.pipelines.pipeline import BenchmarkSummary
 from llm_guard_bench.storage.errors import StorageError
 from llm_guard_bench.streaming_io.loader import JsonlAttackSource
 
@@ -294,9 +295,9 @@ async def test_run_benchmark_reports_count_for_unsized_source(
         def __init__(self, **_kwargs: object) -> None:
             pass
 
-        async def run_benchmark(self, **kwargs: object) -> list[object]:
+        async def run_benchmark_summary(self, **kwargs: object) -> BenchmarkSummary:
             captured_attacks.append(kwargs["attacks"])
-            return []
+            return BenchmarkSummary(0, 0, 0, {})
 
     monkeypatch.setattr(cli, "BenchmarkPipeline", FakePipeline)
     orchestrator = cli.LLMGuardBenchOrchestrator(

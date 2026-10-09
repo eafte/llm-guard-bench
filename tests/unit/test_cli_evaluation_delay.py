@@ -7,6 +7,7 @@ import pytest
 
 from llm_guard_bench import cli
 from llm_guard_bench.domain.models import AttackDefinition
+from llm_guard_bench.pipelines.pipeline import BenchmarkSummary
 
 
 def _attack() -> AttackDefinition:
@@ -81,8 +82,8 @@ async def test_run_benchmark_passes_evaluation_delay_to_pipeline(
         def __init__(self, **kwargs: object) -> None:
             pipeline_kwargs.append(kwargs)
 
-        async def run_benchmark(self, **_kwargs: object) -> list[object]:
-            return []
+        async def run_benchmark_summary(self, **_kwargs: object) -> BenchmarkSummary:
+            return BenchmarkSummary(0, 0, 0, {})
 
     monkeypatch.setattr(cli, "BenchmarkPipeline", FakePipeline)
     orchestrator_kwargs: dict[str, object] = {
