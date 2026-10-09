@@ -36,6 +36,15 @@ from llm_guard_bench.settings import RESULTS_DIR, validate_configuration
 from llm_guard_bench.storage.db import DatabaseManager
 from llm_guard_bench.streaming_io.loader import AttackLoader, JsonlAttackSource
 
+
+def _has_no_verdict(summary: BenchmarkSummary) -> bool:
+    """Return whether pulled attacks produced no verdict-bearing status."""
+    verdict_count = sum(
+        summary.status_counts.get(status, 0) for status in ("PASSED", "VULNERABLE", "AMBIGUOUS")
+    )
+    return summary.attacks_pulled > 0 and verdict_count == 0
+
+
 # Standard production logger configuration
 logging.basicConfig(
     level=logging.INFO,
@@ -303,6 +312,16 @@ class LLMGuardBenchOrchestrator:
             for status_name, count in sorted(summary.status_counts.items()):
                 print(f"    - {status_name}: {count}")
 
+            if _has_no_verdict(summary):
+                print(
+                    "\n✗ No attack reached a verdict "
+                    f"({summary.results_written} results with non-verdict status)"
+                )
+                self.logger.warning(
+                    "No attack reached a verdict: %s results with non-verdict status",
+                    summary.results_written,
+                )
+
             self.logger.info(
                 "Benchmark completed: %s results written, %s errors, %s attacks pulled",
                 summary.results_written,
@@ -552,7 +571,9 @@ class LLMGuardBenchOrchestrator:
             # Stage 5: Run Benchmark (may have partial failures - continue anyway)
             try:
                 self.logger.debug("Stage 5: Running benchmark pipeline...")
-                await self.run_benchmark(attacks)
+                summary = await self.run_benchmark(attacks)
+                if isinstance(summary, BenchmarkSummary) and _has_no_verdict(summary):
+                    exit_code = 1
                 self.logger.info("✓ Stage 5 Complete: Benchmark execution finished")
             except Exception as e:
                 self.logger.error(f"Stage 5 WARNING: {type(e).__name__}: {str(e)}", exc_info=True)
