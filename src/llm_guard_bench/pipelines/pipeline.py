@@ -10,7 +10,8 @@ import asyncio
 import logging
 import math
 import time
-from collections.abc import Iterable, Sized
+from collections.abc import Callable, Iterable, Mapping, Sized
+from dataclasses import dataclass
 
 from llm_guard_bench.domain.models import (
     AttackContext,
@@ -23,6 +24,16 @@ from llm_guard_bench.providers.adapters import BaseAdapter
 from llm_guard_bench.storage.errors import StorageError
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class BenchmarkSummary:
+    """Bounded aggregate counts from a benchmark run."""
+
+    attacks_pulled: int
+    results_written: int
+    errors: int
+    status_counts: Mapping[str, int]
 
 
 class BenchmarkPipeline:
@@ -76,13 +87,90 @@ class BenchmarkPipeline:
         Returns:
             List of TestResult objects containing execution and evaluation metrics
         """
+        results: list[tuple[int, TestResult]] = []
+        pulled_count = await self._run_benchmark_workers(
+            attacks=attacks,
+            model_name=model_name,
+            concurrency_limit=concurrency_limit,
+            session_id=session_id,
+            on_result=lambda index, result: results.append((index, result)),
+            on_error=lambda: None,
+        )
+        if pulled_count is None:
+            return []
+
+        ordered_results = [
+            result for _, result in sorted(results, key=lambda indexed_result: indexed_result[0])
+        ]
+
+        self.logger.info(
+            f"Benchmark completed: {len(ordered_results)} results from {pulled_count} attacks"
+        )
+        return ordered_results
+
+    async def run_benchmark_summary(
+        self,
+        attacks: Iterable[AttackDefinition],
+        model_name: str,
+        concurrency_limit: int,
+        session_id: str,
+    ) -> BenchmarkSummary:
+        """Run a benchmark while retaining only bounded result counts."""
+        status_counts: dict[str, int] = {}
+        results_written = 0
+        errors = 0
+
+        def record_result(_index: int, result: TestResult) -> None:
+            nonlocal results_written
+            results_written += 1
+            status = result.evaluation_status
+            status_counts[status] = status_counts.get(status, 0) + 1
+
+        def record_error() -> None:
+            nonlocal errors
+            errors += 1
+
+        pulled_count = await self._run_benchmark_workers(
+            attacks=attacks,
+            model_name=model_name,
+            concurrency_limit=concurrency_limit,
+            session_id=session_id,
+            on_result=record_result,
+            on_error=record_error,
+        )
+        if pulled_count is None:
+            pulled_count = 0
+
+        self.logger.info(
+            "Benchmark summary completed: %s results from %s attacks (%s errors)",
+            results_written,
+            pulled_count,
+            errors,
+        )
+        return BenchmarkSummary(
+            attacks_pulled=pulled_count,
+            results_written=results_written,
+            errors=errors,
+            status_counts=status_counts,
+        )
+
+    async def _run_benchmark_workers(
+        self,
+        attacks: Iterable[AttackDefinition],
+        model_name: str,
+        concurrency_limit: int,
+        session_id: str,
+        on_result: Callable[[int, TestResult], None],
+        on_error: Callable[[], None],
+    ) -> int | None:
+        """Execute attacks with bounded workers and report outcomes through callbacks."""
         if concurrency_limit < 1:
             raise ValueError("concurrency_limit must be at least 1")
 
         if isinstance(attacks, Sized):
             attack_count = len(attacks)
             if attack_count == 0:
-                return []
+                return None
             worker_count = min(concurrency_limit, attack_count)
         else:
             worker_count = concurrency_limit
@@ -90,7 +178,6 @@ class BenchmarkPipeline:
         queue: asyncio.Queue[tuple[int, AttackDefinition] | None] = asyncio.Queue(
             maxsize=2 * worker_count
         )
-        results: list[tuple[int, TestResult]] = []
         pulled_count = 0
 
         async def _produce() -> None:
@@ -131,10 +218,11 @@ class BenchmarkPipeline:
                         type(exc).__name__,
                         exc,
                     )
+                    on_error()
                     continue
 
                 if isinstance(result, TestResult):
-                    results.append((index, result))
+                    on_result(index, result)
 
         def _find_storage_error(error: BaseException) -> StorageError | None:
             if isinstance(error, StorageError):
@@ -158,14 +246,7 @@ class BenchmarkPipeline:
                 raise storage_error
             raise
 
-        ordered_results = [
-            result for _, result in sorted(results, key=lambda indexed_result: indexed_result[0])
-        ]
-
-        self.logger.info(
-            f"Benchmark completed: {len(ordered_results)} results from {pulled_count} attacks"
-        )
-        return ordered_results
+        return pulled_count
 
     async def _execute_single_test(
         self,
