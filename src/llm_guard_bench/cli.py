@@ -721,8 +721,17 @@ async def async_main() -> None:
     await orchestrator.orchestrate()
 
 
+def configure_console_streams() -> None:
+    """Replace characters unsupported by the current stdout and stderr encodings."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(errors="replace")
+
+
 def main() -> None:
     """Console-script entry point: run the async orchestration to completion."""
+    configure_console_streams()
     asyncio.run(async_main())
 
 
