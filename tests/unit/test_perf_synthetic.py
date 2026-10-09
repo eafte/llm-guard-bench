@@ -6,9 +6,9 @@ from itertools import islice
 from typing import get_args
 
 import pytest
-from llm_guard_bench.perf.synthetic import current_rss_bytes, generate_attacks
 
 from llm_guard_bench.domain.models import AttackCategoryType, AttackDefinition
+from llm_guard_bench.perf.synthetic import current_rss_bytes, generate_attacks
 
 
 def test_generate_attacks_yields_unique_attack_definitions() -> None:
