@@ -65,6 +65,7 @@ class LLMGuardBenchOrchestrator:
         auto_flush: bool = False,
         attacks_file: str | None = None,
         evaluation_delay_seconds: float = 1.0,
+        retry_delays: tuple[float, ...] = (10.0, 30.0, 60.0),
     ):
         self.target = target
         self.judge = judge
@@ -73,6 +74,7 @@ class LLMGuardBenchOrchestrator:
         self.auto_flush = auto_flush
         self.attacks_file = attacks_file
         self.evaluation_delay_seconds = evaluation_delay_seconds
+        self.retry_delays = retry_delays
         self.session_id = self._generate_session_id()
         self.logger = logging.getLogger(f"LLMGuardBench_{self.session_id}")
 
@@ -250,7 +252,11 @@ class LLMGuardBenchOrchestrator:
         print(f"  Judge Model:  {self.judge}")
 
         # Initialize target adapter
-        self.target_adapter = get_adapter(os.getenv("TARGET_PROVIDER", "ollama"), self.target)
+        self.target_adapter = get_adapter(
+            os.getenv("TARGET_PROVIDER", "ollama"),
+            self.target,
+            retry_delays=self.retry_delays,
+        )
 
         # Initialize judge adapter with API key
         judge_provider = os.getenv("JUDGE_PROVIDER", "groq").strip().lower()
@@ -268,6 +274,7 @@ class LLMGuardBenchOrchestrator:
             judge_provider,
             self.judge,
             groq_api_key,
+            retry_delays=self.retry_delays,
         )
 
         print(f"✓ Target adapter initialized: {self.target_adapter.__class__.__name__}")
@@ -664,6 +671,23 @@ def _finite_non_negative_float(value: str) -> float:
     return parsed_value
 
 
+def _retry_delays(value: str) -> tuple[float, ...]:
+    """Parse comma-separated finite, non-negative retry delays."""
+    if value == "":
+        return ()
+
+    delays: list[float] = []
+    for entry in value.split(","):
+        try:
+            delay = float(entry)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(f"invalid retry delay: {entry}") from exc
+        if not math.isfinite(delay) or delay < 0:
+            raise argparse.ArgumentTypeError("retry delays must be finite and non-negative")
+        delays.append(delay)
+    return tuple(delays)
+
+
 def parse_arguments() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
@@ -693,6 +717,16 @@ def parse_arguments() -> argparse.Namespace:
         type=_finite_non_negative_float,
         default=1.0,
         help="Per-attack pause in seconds before each judge call; 0 disables it",
+    )
+    parser.add_argument(
+        "--retry-delays",
+        dest="retry_delays",
+        type=_retry_delays,
+        default=(10.0, 30.0, 60.0),
+        help=(
+            "comma-separated seconds to wait between connection retries for Ollama target and "
+            "judge; empty string disables retries"
+        ),
     )
     parser.add_argument(
         "--attacks-file",
@@ -737,6 +771,7 @@ async def async_main() -> None:
         auto_flush=args.auto_flush,
         attacks_file=args.attacks_file,
         evaluation_delay_seconds=getattr(args, "evaluation_delay", 1.0),
+        retry_delays=getattr(args, "retry_delays", (10.0, 30.0, 60.0)),
     )
     await orchestrator.orchestrate()
 
