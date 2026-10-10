@@ -19,6 +19,7 @@ Each adapter:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import os
@@ -72,15 +73,21 @@ class OllamaAdapter(BaseAdapter):
         timeout_seconds: float = 180.0,
         default_temperature: float = 0.0,
         retry_delays: tuple[float, ...] = CONNECTION_RETRY_DELAYS,
+        max_response_bytes: int = 8 * 1024 * 1024,
     ) -> None:
         if any(not math.isfinite(delay) or delay < 0 for delay in retry_delays):
             raise ValueError("retry_delays must contain only finite, non-negative values")
+        if isinstance(max_response_bytes, bool) or not isinstance(max_response_bytes, int):
+            raise ValueError("max_response_bytes must be a positive integer")
+        if max_response_bytes < 1:
+            raise ValueError("max_response_bytes must be a positive integer")
 
         self.model_name = model_name
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self.default_temperature = default_temperature
         self.retry_delays = tuple(retry_delays)
+        self.max_response_bytes = max_response_bytes
 
     async def health_check(self) -> bool:
         """Ping Ollama, retrying connection failures while the service recovers."""
@@ -109,6 +116,14 @@ class OllamaAdapter(BaseAdapter):
 
         return False
 
+    async def _read_bounded_body(self, response: Any) -> tuple[bytes, bool]:
+        body = bytearray()
+        async for chunk in response.content.iter_chunked(65536):
+            body.extend(chunk)
+            if len(body) > self.max_response_bytes:
+                return bytes(body), True
+        return bytes(body), False
+
     async def _post_chat(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Post to Ollama, retrying only connection-level failures."""
         url = f"{self.base_url}/api/chat"
@@ -118,12 +133,22 @@ class OllamaAdapter(BaseAdapter):
             try:
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     async with session.post(url, json=payload) as response:
+                        body, truncated = await self._read_bounded_body(response)
                         if response.status >= 400:
-                            body = await response.text()
+                            text = body.decode(errors="replace")[:2000]
                             raise RuntimeError(
-                                f"Ollama API error (status={response.status}): {body}"
+                                f"Ollama API error (status={response.status}): {text}"
                             )
-                        return await response.json(content_type=None)
+                        if truncated:
+                            raise RuntimeError(
+                                "Ollama response too large: exceeded "
+                                f"{self.max_response_bytes} bytes"
+                            )
+                        try:
+                            parsed_body = json.loads(body)
+                        except ValueError as exc:
+                            raise RuntimeError("Ollama returned invalid JSON") from exc
+                        return parsed_body
             except TimeoutError as exc:
                 raise RuntimeError(
                     f"Ollama request timed out after {self.timeout_seconds} seconds"
