@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import pathlib
 from abc import ABC, abstractmethod
@@ -70,18 +71,23 @@ class OllamaAdapter(BaseAdapter):
         base_url: str = "http://localhost:11434",
         timeout_seconds: float = 180.0,
         default_temperature: float = 0.0,
+        retry_delays: tuple[float, ...] = CONNECTION_RETRY_DELAYS,
     ) -> None:
+        if any(not math.isfinite(delay) or delay < 0 for delay in retry_delays):
+            raise ValueError("retry_delays must contain only finite, non-negative values")
+
         self.model_name = model_name
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self.default_temperature = default_temperature
+        self.retry_delays = tuple(retry_delays)
 
     async def health_check(self) -> bool:
         """Ping Ollama, retrying connection failures while the service recovers."""
         url = f"{self.base_url}/api/tags"
         timeout = aiohttp.ClientTimeout(total=min(self.timeout_seconds, 10.0))
 
-        for attempt in range(len(self.CONNECTION_RETRY_DELAYS) + 1):
+        for attempt in range(len(self.retry_delays) + 1):
             try:
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     async with session.get(url) as response:
@@ -93,11 +99,11 @@ class OllamaAdapter(BaseAdapter):
             except (TimeoutError, aiohttp.ClientConnectionError) as exc:
                 logging.getLogger(__name__).warning(
                     f"Ollama health check failed on attempt {attempt + 1}/"
-                    f"{len(self.CONNECTION_RETRY_DELAYS) + 1}: {exc}"
+                    f"{len(self.retry_delays) + 1}: {exc}"
                 )
 
-            if attempt < len(self.CONNECTION_RETRY_DELAYS):
-                delay = self.CONNECTION_RETRY_DELAYS[attempt]
+            if attempt < len(self.retry_delays):
+                delay = self.retry_delays[attempt]
                 logging.getLogger(__name__).warning(f"Retrying Ollama health check in {delay}s")
                 await asyncio.sleep(delay)
 
@@ -108,7 +114,7 @@ class OllamaAdapter(BaseAdapter):
         url = f"{self.base_url}/api/chat"
         timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
 
-        for attempt in range(len(self.CONNECTION_RETRY_DELAYS) + 1):
+        for attempt in range(len(self.retry_delays) + 1):
             try:
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     async with session.post(url, json=payload) as response:
@@ -123,13 +129,13 @@ class OllamaAdapter(BaseAdapter):
                     f"Ollama request timed out after {self.timeout_seconds} seconds"
                 ) from exc
             except aiohttp.ClientConnectionError as exc:
-                if attempt >= len(self.CONNECTION_RETRY_DELAYS):
+                if attempt >= len(self.retry_delays):
                     raise RuntimeError(f"Ollama connection error: {exc}") from exc
 
-                delay = self.CONNECTION_RETRY_DELAYS[attempt]
+                delay = self.retry_delays[attempt]
                 logging.getLogger(__name__).warning(
                     f"Ollama connection failure on attempt {attempt + 1}/"
-                    f"{len(self.CONNECTION_RETRY_DELAYS) + 1}: {exc}. "
+                    f"{len(self.retry_delays) + 1}: {exc}. "
                     f"Retrying in {delay}s..."
                 )
                 await asyncio.sleep(delay)
