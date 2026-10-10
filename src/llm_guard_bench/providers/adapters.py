@@ -396,14 +396,26 @@ def _get_default_ollama_url() -> str:
     return "http://localhost:11434"
 
 
-def get_adapter(provider: str, model_name: str, api_key: str | None = None) -> BaseAdapter:
+def get_adapter(
+    provider: str,
+    model_name: str,
+    api_key: str | None = None,
+    retry_delays: tuple[float, ...] | None = None,
+) -> BaseAdapter:
     """Factory for provider-specific adapters."""
     normalized = (provider or "").strip().lower()
 
     if normalized == "ollama":
         base_url = _get_default_ollama_url()
         # এখানে explicit ভাবে timeout_seconds=180.0 পাস করে দিচ্ছি
-        return OllamaAdapter(model_name=model_name, base_url=base_url, timeout_seconds=180.0)
+        if retry_delays is None:
+            return OllamaAdapter(model_name=model_name, base_url=base_url, timeout_seconds=180.0)
+        return OllamaAdapter(
+            model_name=model_name,
+            base_url=base_url,
+            timeout_seconds=180.0,
+            retry_delays=retry_delays,
+        )
 
     if normalized == "groq":
         if not api_key:
