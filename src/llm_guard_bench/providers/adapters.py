@@ -31,6 +31,10 @@ import aiohttp
 from groq import AsyncGroq
 
 
+class PermanentProviderError(RuntimeError):
+    """A request error that retrying cannot fix."""
+
+
 class BaseAdapter(ABC):
     """Abstract interface for model provider adapters."""
 
@@ -136,9 +140,10 @@ class OllamaAdapter(BaseAdapter):
                         body, truncated = await self._read_bounded_body(response)
                         if response.status >= 400:
                             text = body.decode(errors="replace")[:2000]
-                            raise RuntimeError(
-                                f"Ollama API error (status={response.status}): {text}"
-                            )
+                            message = f"Ollama API error (status={response.status}): {text}"
+                            if 400 <= response.status < 500 and response.status not in (408, 429):
+                                raise PermanentProviderError(message)
+                            raise RuntimeError(message)
                         if truncated:
                             raise RuntimeError(
                                 "Ollama response too large: exceeded "
@@ -211,6 +216,8 @@ class OllamaAdapter(BaseAdapter):
                 f"Ollama response missing expected content keys; returning empty string. Raw: {data}"
             )
             return ""
+        except PermanentProviderError:
+            raise
         except Exception as exc:
             raise RuntimeError(f"Failed to parse Ollama response: {exc}") from exc
 
@@ -247,6 +254,8 @@ class OllamaAdapter(BaseAdapter):
                 f"Ollama response missing expected content keys for multi-turn; returning empty string. Raw: {data}"
             )
             return ""
+        except PermanentProviderError:
+            raise
         except Exception as exc:
             raise RuntimeError(f"Failed to parse Ollama response: {exc}") from exc
 
@@ -319,6 +328,8 @@ class GroqAdapter(BaseAdapter):
                 f"Groq network failure: request timed out after {self.timeout_seconds} seconds"
             ) from exc
         except Exception as exc:
+            if getattr(exc, "status_code", None) in (400, 401, 403):
+                raise PermanentProviderError(self._format_request_error(exc)) from exc
             raise RuntimeError(self._format_request_error(exc)) from exc
 
     async def generate(
@@ -355,6 +366,8 @@ class GroqAdapter(BaseAdapter):
                 return ""
             # Return content (may be empty string)
             return content.strip()
+        except PermanentProviderError:
+            raise
         except Exception as exc:
             logging.getLogger(__name__).warning(
                 f"Failed to parse Groq response: {exc}. Returning empty string."
@@ -388,6 +401,8 @@ class GroqAdapter(BaseAdapter):
                 )
                 return ""
             return content.strip()
+        except PermanentProviderError:
+            raise
         except Exception as exc:
             logging.getLogger(__name__).warning(
                 f"Failed to parse Groq response (multi-turn): {exc}. Returning empty string."

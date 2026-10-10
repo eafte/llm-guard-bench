@@ -8,13 +8,14 @@ assessing whether LLM responses are vulnerable to prompt injection attacks.
 import asyncio
 import json
 import logging
+import math
 import re
 import secrets
 from abc import ABC, abstractmethod
 from enum import Enum
 
 from llm_guard_bench.domain.models import AttackContext
-from llm_guard_bench.providers.adapters import BaseAdapter
+from llm_guard_bench.providers.adapters import BaseAdapter, PermanentProviderError
 
 
 class EvaluationResult(str, Enum):
@@ -139,7 +140,13 @@ class JudgeLLMEvaluator(BaseEvaluator):
     the judge's response to determine vulnerability.
     """
 
-    def __init__(self, judge_adapter: BaseAdapter) -> None:
+    def __init__(
+        self,
+        judge_adapter: BaseAdapter,
+        *,
+        max_retries: int = 3,
+        base_delay: float = 2.0,
+    ) -> None:
         """
         Initialize the JudgeLLMEvaluator.
 
@@ -151,7 +158,19 @@ class JudgeLLMEvaluator(BaseEvaluator):
         """
         if judge_adapter is None:
             raise ValueError("judge_adapter cannot be None")
+        if isinstance(max_retries, bool) or not isinstance(max_retries, int) or max_retries < 0:
+            raise ValueError("max_retries must be a non-negative integer")
+        if (
+            isinstance(base_delay, bool)
+            or not isinstance(base_delay, int | float)
+            or not math.isfinite(base_delay)
+            or base_delay < 0
+        ):
+            raise ValueError("base_delay must be a finite, non-negative number")
+
         self.judge_adapter = judge_adapter
+        self.max_retries = max_retries
+        self.base_delay = base_delay
 
     def _format_grading_prompt(self, target_response: str, context: AttackContext) -> str:
         """
@@ -288,8 +307,6 @@ class JudgeLLMEvaluator(BaseEvaluator):
             EvaluationResult based on the judge's assessment.
         """
         logger = logging.getLogger(__name__)
-        max_retries = 3
-        base_delay = 2  # seconds
 
         # Strict system prompt: enforce JSON-only output for 8B judge model
         JUDGE_SYSTEM_PROMPT = (
@@ -307,7 +324,7 @@ class JudgeLLMEvaluator(BaseEvaluator):
             grading_prompt = self._format_grading_prompt(target_response, context)
 
             # Exponential backoff retry loop
-            for attempt in range(max_retries + 1):
+            for attempt in range(self.max_retries + 1):
                 try:
                     judge_response = await self.judge_adapter.generate(
                         system_prompt=JUDGE_SYSTEM_PROMPT, user_prompt=grading_prompt
@@ -323,31 +340,38 @@ class JudgeLLMEvaluator(BaseEvaluator):
                     result = self._parse_judge_response(judge_response)
                     return result
 
+                except PermanentProviderError as e:
+                    logger.error(
+                        f"Judge LLM permanent provider error; not retrying: "
+                        f"{type(e).__name__}: {str(e)}"
+                    )
+                    return EvaluationResult.EVAL_ERROR
+
                 except TimeoutError:
-                    if attempt < max_retries:
-                        wait_time = base_delay * (2**attempt)
+                    if attempt < self.max_retries:
+                        wait_time = self.base_delay * (2**attempt)
                         logger.warning(
-                            f"Judge LLM timeout on attempt {attempt + 1}/{max_retries + 1}. "
+                            f"Judge LLM timeout on attempt {attempt + 1}/{self.max_retries + 1}. "
                             f"Retrying in {wait_time}s..."
                         )
                         await asyncio.sleep(wait_time)
                     else:
                         logger.warning(
-                            f"Judge LLM request timed out after {max_retries + 1} attempts (180s limit exceeded)"
+                            f"Judge LLM request timed out after {self.max_retries + 1} attempts (180s limit exceeded)"
                         )
                         return EvaluationResult.EVAL_ERROR
 
                 except Exception as e:
-                    if attempt < max_retries:
-                        wait_time = base_delay * (2**attempt)
+                    if attempt < self.max_retries:
+                        wait_time = self.base_delay * (2**attempt)
                         logger.warning(
-                            f"Judge LLM adapter error on attempt {attempt + 1}/{max_retries + 1}: "
+                            f"Judge LLM adapter error on attempt {attempt + 1}/{self.max_retries + 1}: "
                             f"{type(e).__name__}: {str(e)}. Retrying in {wait_time}s..."
                         )
                         await asyncio.sleep(wait_time)
                     else:
                         logger.error(
-                            f"Judge LLM adapter failed after {max_retries + 1} attempts: "
+                            f"Judge LLM adapter failed after {self.max_retries + 1} attempts: "
                             f"{type(e).__name__}: {str(e)}"
                         )
                         return EvaluationResult.EVAL_ERROR
