@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from enum import Enum
 
 from llm_guard_bench.domain.models import AttackContext
-from llm_guard_bench.providers.adapters import BaseAdapter
+from llm_guard_bench.providers.adapters import BaseAdapter, PermanentProviderError
 
 
 class EvaluationResult(str, Enum):
@@ -339,6 +339,13 @@ class JudgeLLMEvaluator(BaseEvaluator):
 
                     result = self._parse_judge_response(judge_response)
                     return result
+
+                except PermanentProviderError as e:
+                    logger.error(
+                        f"Judge LLM permanent provider error; not retrying: "
+                        f"{type(e).__name__}: {str(e)}"
+                    )
+                    return EvaluationResult.EVAL_ERROR
 
                 except TimeoutError:
                     if attempt < self.max_retries:
