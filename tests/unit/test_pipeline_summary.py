@@ -147,6 +147,7 @@ async def test_summary_counts_worker_errors_without_counting_them_as_written(
         attack_index: int,
         session_id: str,
         timeout_seconds: float = 180.0,
+        readiness_outcome: bool | Exception | None = None,
     ) -> PipelineTestResult | None:
         if attack.attack_id == "attack-2":
             raise RuntimeError("simulated worker failure")
@@ -156,6 +157,7 @@ async def test_summary_counts_worker_errors_without_counting_them_as_written(
             attack_index=attack_index,
             session_id=session_id,
             timeout_seconds=timeout_seconds,
+            readiness_outcome=readiness_outcome,
         )
 
     monkeypatch.setattr(pipeline, "_execute_single_test", fail_one_attack)
@@ -180,6 +182,7 @@ async def test_summary_counts_none_result_as_worker_error(
         attack_index: int,
         session_id: str,
         timeout_seconds: float = 180.0,
+        readiness_outcome: bool | Exception | None = None,
     ) -> PipelineTestResult | None:
         if attack.attack_id == "attack-2":
             return None
@@ -189,6 +192,7 @@ async def test_summary_counts_none_result_as_worker_error(
             attack_index=attack_index,
             session_id=session_id,
             timeout_seconds=timeout_seconds,
+            readiness_outcome=readiness_outcome,
         )
 
     monkeypatch.setattr(pipeline, "_execute_single_test", return_none_for_one_attack)

@@ -179,6 +179,19 @@ class BenchmarkPipeline:
             maxsize=2 * worker_count
         )
         pulled_count = 0
+        readiness_task: asyncio.Task[bool] | None = None
+
+        async def _get_readiness_outcome() -> bool | Exception:
+            nonlocal readiness_task
+            # No suspension occurs between this check and task creation.
+            if readiness_task is None:
+                readiness_task = asyncio.create_task(self.target_adapter.health_check())
+            try:
+                return await asyncio.shield(readiness_task)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                return exc
 
         async def _produce() -> None:
             nonlocal pulled_count
@@ -202,11 +215,13 @@ class BenchmarkPipeline:
 
                 index, attack = item
                 try:
+                    readiness_outcome = await _get_readiness_outcome()
                     result = await self._execute_single_test(
                         attack=attack,
                         model_name=model_name,
                         attack_index=index,
                         session_id=session_id,
+                        readiness_outcome=readiness_outcome,
                     )
                 except StorageError:
                     raise
@@ -242,16 +257,22 @@ class BenchmarkPipeline:
             return None
 
         try:
-            async with asyncio.TaskGroup() as task_group:
-                task_group.create_task(_produce())
-                for _ in range(worker_count):
-                    task_group.create_task(_work())
-        except BaseExceptionGroup as error_group:
-            storage_error = _find_storage_error(error_group)
-            if storage_error is not None:
-                self.logger.error("Benchmark encountered persistence failures")
-                raise storage_error
-            raise
+            try:
+                async with asyncio.TaskGroup() as task_group:
+                    task_group.create_task(_produce())
+                    for _ in range(worker_count):
+                        task_group.create_task(_work())
+            except BaseExceptionGroup as error_group:
+                storage_error = _find_storage_error(error_group)
+                if storage_error is not None:
+                    self.logger.error("Benchmark encountered persistence failures")
+                    raise storage_error
+                raise
+        finally:
+            if readiness_task is not None:
+                if not readiness_task.done():
+                    readiness_task.cancel()
+                await asyncio.gather(readiness_task, return_exceptions=True)
 
         return pulled_count
 
@@ -262,6 +283,7 @@ class BenchmarkPipeline:
         attack_index: int,
         session_id: str,
         timeout_seconds: float = 180.0,
+        readiness_outcome: bool | Exception | None = None,
     ) -> TestResult:
         """
         Execute a single benchmark test with full instrumentation and error handling.
@@ -288,16 +310,17 @@ class BenchmarkPipeline:
         # ===== Pre-flight: Target Provider Health Check =====
         health_start = time.time()
         try:
-            target_healthy = await self.target_adapter.health_check()
+            target_healthy = readiness_outcome
+            if target_healthy is None:
+                target_healthy = await self.target_adapter.health_check()
+            if isinstance(target_healthy, Exception):
+                raise target_healthy
             if not target_healthy:
                 execution_time_ms = int((time.time() - health_start) * 1000)
                 eval_result = EvalResult(
                     status="EVAL_ERROR",
                     stage="PRE_FLIGHT",
-                    error_message=(
-                        "Target model health check failed after connection "
-                        "retries; Ollama endpoint remained unreachable"
-                    ),
+                    error_message="Target model health check failed; target endpoint unreachable",
                 )
         except Exception as e:
             execution_time_ms = int((time.time() - health_start) * 1000)
